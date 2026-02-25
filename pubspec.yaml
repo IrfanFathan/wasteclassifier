@@ -1,0 +1,30 @@
+name: wasteclassifier
+description: "A real-time waste classifier using your own Teachable Machine TFLite model."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  camera: ^0.10.5+9
+  tflite_flutter: ^0.12.0
+  image: ^4.1.7
+  file_picker: ^8.0.0+1
+  path_provider: ^2.1.2
+  path: ^1.9.0
+  shared_preferences: ^2.2.2
+  flutter_colorpicker: ^1.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
