@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../models/app_config.dart';
 import '../models/bin_category.dart';
 import '../utils/config_manager.dart';
@@ -74,7 +75,7 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF16213E),
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -94,30 +95,30 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
                 Text(
                   existing == null ? 'Add New Bin' : 'Edit Bin',
                   style: const TextStyle(
-                      color: Colors.white,
+                      color: Color(0xFF08090E),
                       fontSize: 20,
-                      fontWeight: FontWeight.bold),
+                      fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 20),
                 // Bin name
                 TextField(
                   controller: nameController,
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(color: Color(0xFF08090E)),
                   decoration: _inputDecoration('Bin Name (e.g. Plastic Bin)'),
                 ),
                 const SizedBox(height: 12),
                 // Emoji
                 TextField(
                   controller: emojiController,
-                  style: const TextStyle(color: Colors.white, fontSize: 24),
+                  style: const TextStyle(color: Color(0xFF08090E), fontSize: 24),
                   decoration: _inputDecoration('Emoji (e.g. ♻️)'),
                 ),
                 const SizedBox(height: 16),
                 // Color picker
-                Text(
+                const Text(
                   'Bin Color:',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
+                      color: Color(0xFF727067), fontSize: 13),
                 ),
                 const SizedBox(height: 8),
                 SizedBox(
@@ -138,10 +139,10 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
                       child: OutlinedButton(
                         onPressed: () => Navigator.pop(ctx),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                          side: const BorderSide(color: Colors.white30),
+                          foregroundColor: const Color(0xFF727067),
+                          side: const BorderSide(color: Color(0xFFABA69E)),
                           shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
+                              borderRadius: BorderRadius.circular(8)),
                         ),
                         child: const Text('Cancel'),
                       ),
@@ -185,14 +186,8 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
                           });
                           Navigator.pop(ctx);
                         },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.greenAccent,
-                          foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
                         child: const Text('Save',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: TextStyle(fontWeight: FontWeight.w600)),
                       ),
                     ),
                   ],
@@ -272,12 +267,16 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
 
   InputDecoration _inputDecoration(String hint) => InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
+        hintStyle: const TextStyle(color: Color(0xFFABA69E)),
         filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.07),
+        fillColor: Colors.white,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFFABA69E), width: 0.5),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFFABA69E), width: 0.5),
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -286,13 +285,10 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF16213E),
-        title: const Text('Bin Setup',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        iconTheme: const IconThemeData(color: Colors.white),
-        elevation: 0,
+        title: Text('Bin Setup',
+            style: GoogleFonts.inter(color: const Color(0xFF08090E), fontWeight: FontWeight.w600)),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -310,44 +306,44 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () => _showAddEditBinSheet(),
-            icon: const Icon(Icons.add, color: Colors.greenAccent),
+            icon: const Icon(Icons.add, color: Color(0xFF08090E)),
             label: const Text('Add New Bin',
-                style: TextStyle(color: Colors.greenAccent)),
+                style: TextStyle(color: Color(0xFF08090E))),
             style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.greenAccent, width: 1.5),
+              side: const BorderSide(color: Color(0xFF08090E), width: 1.5),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(8)),
               padding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             ),
           ),
 
           const SizedBox(height: 28),
-          const Divider(color: Colors.white12),
+          const Divider(),
           const SizedBox(height: 12),
 
           // ─── SECTION B: Map Labels to Bins ───
           _sectionHeader('Map Labels to Bins'),
           const SizedBox(height: 4),
-          Text(
+          const Text(
             'Assign each detected class to a bin, mark it as "Nothing / Skip" (background), or leave it Unmapped.',
             style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.45), fontSize: 12, height: 1.5),
+                color: Color(0xFF727067), fontSize: 13, height: 1.5),
           ),
           const SizedBox(height: 12),
           if (widget.labels.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
               child: Text(
                 'No labels found. Please re-upload your labels.txt file.',
-                style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.8)),
+                style: TextStyle(color: Color(0xFFC62828)),
               ),
             )
           else
             ...widget.labels.map((label) => _labelMappingRow(label)),
 
           const SizedBox(height: 28),
-          const Divider(color: Colors.white12),
+          const Divider(),
           const SizedBox(height: 12),
 
           // ─── SECTION C: Settings ───
@@ -356,8 +352,9 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: const Color(0xFF16213E),
-              borderRadius: BorderRadius.circular(16),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFABA69E), width: 0.5),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -365,16 +362,16 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
+                    const Text(
                       'Detection Sensitivity',
                       style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.8),
+                          color: Color(0xFF08090E),
                           fontWeight: FontWeight.w600),
                     ),
                     Text(
                       '${(_confidenceThreshold * 100).toStringAsFixed(0)}%',
                       style: const TextStyle(
-                          color: Colors.greenAccent,
+                          color: Color(0xFF08090E),
                           fontWeight: FontWeight.bold,
                           fontSize: 16),
                     ),
@@ -385,15 +382,15 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
                   min: 0.50,
                   max: 0.99,
                   divisions: 49,
-                  activeColor: Colors.greenAccent,
-                  inactiveColor: Colors.white12,
+                  activeColor: const Color(0xFF08090E),
+                  inactiveColor: const Color(0xFFABA69E).withValues(alpha: 0.3),
                   onChanged: (v) =>
                       setState(() => _confidenceThreshold = v),
                 ),
-                Text(
+                const Text(
                   'Only show a detection result when confidence exceeds this threshold.',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                      color: Color(0xFF727067), fontSize: 12),
                 ),
               ],
             ),
@@ -404,24 +401,17 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
           // ─── Save Button ───
           SizedBox(
             width: double.infinity,
-            height: 54,
+            height: 52,
             child: ElevatedButton(
               onPressed: _isSaving ? null : _saveAndNavigate,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.greenAccent,
-                disabledBackgroundColor: Colors.greenAccent.withValues(alpha: 0.4),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
-              ),
               child: _isSaving
                   ? const CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.black)
+                      strokeWidth: 2, color: Colors.white)
                   : const Text(
                       '✅ Save & Start Detecting',
                       style: TextStyle(
-                          color: Colors.black,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14),
                     ),
             ),
           ),
@@ -434,10 +424,10 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
   Widget _sectionHeader(String title) {
     return Text(
       title,
-      style: const TextStyle(
-          color: Colors.white,
+      style: GoogleFonts.inter(
+          color: const Color(0xFF08090E),
           fontSize: 18,
-          fontWeight: FontWeight.bold),
+          fontWeight: FontWeight.w600),
     );
   }
 
@@ -446,18 +436,18 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFABA69E), width: 0.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             '💡 Example Configuration',
             style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.6),
-                fontWeight: FontWeight.bold,
+                color: Color(0xFF08090E),
+                fontWeight: FontWeight.w600,
                 fontSize: 13),
           ),
           const SizedBox(height: 8),
@@ -482,13 +472,13 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
           children: [
             TextSpan(
               text: '$label: ',
-              style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.4),
+              style: const TextStyle(
+                  color: Color(0xFF08090E),
                   fontWeight: FontWeight.w600),
             ),
             TextSpan(
               text: value,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+              style: const TextStyle(color: Color(0xFF727067)),
             ),
           ],
         ),

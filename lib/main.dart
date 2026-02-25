@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'screens/upload_screen.dart';
 import 'screens/bin_setup_screen.dart';
 import 'screens/detection_screen.dart';
@@ -19,31 +20,86 @@ class WasteClassifierApp extends StatelessWidget {
       title: 'Waste Classifier',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF1A1A2E),
-        colorScheme: ColorScheme.dark(
-          primary: Colors.greenAccent,
-          secondary: Colors.greenAccent,
-          surface: const Color(0xFF16213E),
+        useMaterial3: true,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: const Color(0xFFFCFEFF),
+        colorScheme: const ColorScheme(
+          brightness: Brightness.light,
+          primary: Color(0xFF08090E),
+          onPrimary: Colors.white,
+          secondary: Color(0xFF727067),
+          onSecondary: Colors.white,
+          error: Color(0xFFC62828),
+          onError: Colors.white,
+          surface: Colors.white,
+          onSurface: Color(0xFF08090E),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF16213E),
           elevation: 0,
-          titleTextStyle: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
+          backgroundColor: Color(0xFFFCFEFF),
+          foregroundColor: Color(0xFF08090E),
+          centerTitle: false,
+        ),
+        cardTheme: CardTheme(
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          color: Colors.white,
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF08090E),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(
+              vertical: 12,
+              horizontal: 20,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         ),
-        sliderTheme: const SliderThemeData(
-          activeTrackColor: Colors.greenAccent,
-          thumbColor: Colors.greenAccent,
+        dividerTheme: const DividerThemeData(
+          color: Color(0xFFABA69E),
+          thickness: 0.5,
         ),
-        textTheme: const TextTheme(
-          bodyMedium: TextStyle(color: Colors.white),
-          bodyLarge: TextStyle(color: Colors.white),
+        textTheme: GoogleFonts.interTextTheme(
+          const TextTheme(
+            displayLarge: TextStyle(
+              fontSize: 34,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF08090E),
+            ),
+            headlineMedium: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF08090E),
+            ),
+            titleMedium: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF08090E),
+            ),
+            bodyLarge: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w400,
+              color: Color(0xFF08090E),
+              height: 1.5,
+            ),
+            bodyMedium: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: Color(0xFF727067),
+              height: 1.5,
+            ),
+            labelSmall: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w400,
+              color: Color(0xFFABA69E),
+            ),
+          ),
         ),
-        useMaterial3: true,
       ),
       home: const _AppStartup(),
     );
@@ -102,27 +158,27 @@ class _AppStartupState extends State<_AppStartup> {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFF1A1A2E),
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
+            const Text(
               '♻️',
               style: TextStyle(fontSize: 64),
             ),
-            SizedBox(height: 24),
+            const SizedBox(height: 24),
             Text(
               'Waste Classifier',
-              style: TextStyle(
-                color: Colors.white,
+              style: GoogleFonts.inter(
+                color: const Color(0xFF08090E),
                 fontSize: 28,
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            SizedBox(height: 32),
-            CircularProgressIndicator(color: Colors.greenAccent),
+            const SizedBox(height: 32),
+            const CircularProgressIndicator(color: Color(0xFF08090E)),
           ],
         ),
       ),

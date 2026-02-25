@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../utils/config_manager.dart';
 import '../utils/model_manager.dart';
 import 'bin_setup_screen.dart';
@@ -228,21 +229,20 @@ class _UploadScreenState extends State<UploadScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF16213E),
+        backgroundColor: Colors.white,
         title: const Text('Remove model files',
-            style: TextStyle(color: Colors.white)),
+            style: TextStyle(color: Color(0xFF08090E))),
         content: const Text(
           'This deletes model.tflite and labels.txt from the app storage.',
-          style: TextStyle(color: Colors.white70),
-        ),
+          style: TextStyle(color: Color(0xFF727067))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF727067))),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove', style: TextStyle(color: Colors.redAccent)),
+            child: const Text('Remove', style: TextStyle(color: Color(0xFFC62828))),
           ),
         ],
       ),
@@ -266,7 +266,7 @@ class _UploadScreenState extends State<UploadScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -276,15 +276,15 @@ class _UploadScreenState extends State<UploadScreen>
                   const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
               child: Column(
                 children: [
-                  const Text('♻️ Waste Classifier',
-                      style: TextStyle(
-                          color: Colors.white,
+                  Text('♻️ Waste Classifier',
+                      style: GoogleFonts.inter(
+                          color: const Color(0xFF08090E),
                           fontSize: 26,
-                          fontWeight: FontWeight.bold)),
+                          fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
                   Text('Upload your Teachable Machine model',
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                      style: GoogleFonts.inter(
+                          color: const Color(0xFF727067),
                           fontSize: 13)),
                 ],
               ),
@@ -313,19 +313,20 @@ class _UploadScreenState extends State<UploadScreen>
               child: Container(
                 height: 44,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF16213E),
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFABA69E), width: 0.5),
                 ),
                 child: TabBar(
                   controller: _tabController,
                   indicator: BoxDecoration(
-                    color: Colors.greenAccent,
+                    color: const Color(0xFF08090E),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  labelColor: Colors.black,
-                  unselectedLabelColor: Colors.white54,
+                  labelColor: Colors.white,
+                  unselectedLabelColor: const Color(0xFF727067),
                   labelStyle: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 13),
+                      fontWeight: FontWeight.w600, fontSize: 13),
                   dividerColor: Colors.transparent,
                   tabs: const [
                     Tab(text: '📦  Upload ZIP'),
@@ -362,26 +363,21 @@ class _UploadScreenState extends State<UploadScreen>
                           _navigateNext(labels);
                         },
                         icon: const Icon(Icons.arrow_forward,
-                            color: Colors.black, size: 18),
+                            color: Colors.white, size: 18),
                         label: const Text('Continue → Set Up Bins',
                             style: TextStyle(
-                                color: Colors.black,
-                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
                                 fontSize: 15)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.greenAccent,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
-                        ),
                       ),
                     ),
                     TextButton.icon(
                       onPressed: _clearFiles,
                       icon: const Icon(Icons.delete_outline,
-                          color: Colors.redAccent, size: 15),
+                          color: Color(0xFFC62828), size: 15),
                       label: const Text('Remove all files',
                           style:
-                              TextStyle(color: Colors.redAccent, fontSize: 12)),
+                              TextStyle(color: Color(0xFFC62828), fontSize: 13)),
                     ),
                   ],
                 ),
@@ -392,7 +388,7 @@ class _UploadScreenState extends State<UploadScreen>
               child: Text(
                 '🔒 Files persist after close or reboot',
                 style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.25),
+                    color: const Color(0xFFABA69E),
                     fontSize: 11),
               ),
             ),
@@ -415,21 +411,21 @@ class _UploadScreenState extends State<UploadScreen>
             width: 100,
             height: 100,
             decoration: BoxDecoration(
-              color: const Color(0xFF16213E),
+              color: Colors.white,
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
                 color: _zipState == _UploadState.success
-                    ? Colors.greenAccent
+                    ? const Color(0xFF08090E)
                     : _zipState == _UploadState.error
-                        ? Colors.redAccent
-                        : Colors.white24,
-                width: 2,
+                        ? const Color(0xFFC62828)
+                        : const Color(0xFFABA69E),
+                width: 1,
               ),
             ),
             child: Center(
               child: _zipState == _UploadState.loading
                   ? const CircularProgressIndicator(
-                      color: Colors.greenAccent, strokeWidth: 3)
+                      color: Color(0xFF08090E), strokeWidth: 3)
                   : Icon(
                       _zipState == _UploadState.success
                           ? Icons.check_circle_outline
@@ -437,10 +433,10 @@ class _UploadScreenState extends State<UploadScreen>
                               ? Icons.error_outline
                               : Icons.folder_zip_outlined,
                       color: _zipState == _UploadState.success
-                          ? Colors.greenAccent
+                          ? const Color(0xFF08090E)
                           : _zipState == _UploadState.error
-                              ? Colors.redAccent
-                              : Colors.white38,
+                              ? const Color(0xFFC62828)
+                              : const Color(0xFF727067),
                       size: 48,
                     ),
             ),
@@ -452,17 +448,18 @@ class _UploadScreenState extends State<UploadScreen>
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFF16213E),
-              borderRadius: BorderRadius.circular(14),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFABA69E), width: 0.5),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Teachable Machine export steps:',
                     style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12)),
+                        color: Color(0xFF08090E),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13)),
                 const SizedBox(height: 8),
                 _infoLine('Export Model → TensorFlow Lite → Floating Point'),
                 _infoLine('Download the .zip — it includes both files'),
@@ -483,24 +480,17 @@ class _UploadScreenState extends State<UploadScreen>
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.black))
+                          strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.folder_zip_outlined,
-                      color: Colors.black, size: 20),
+                      color: Colors.white, size: 20),
               label: Text(
                 _zipState == _UploadState.loading
                     ? _zipStatus
                     : '  Pick .zip File',
                 style: const TextStyle(
-                    color: Colors.black,
-                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
                     fontSize: 14),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.greenAccent,
-                disabledBackgroundColor:
-                    Colors.greenAccent.withValues(alpha: 0.4),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
               ),
             ),
           ),
@@ -547,10 +537,10 @@ class _UploadScreenState extends State<UploadScreen>
           const SizedBox(height: 20),
 
           if (!bothReady)
-            Text(
+            const Text(
               'Upload both files to enable the Continue button below',
               style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.35),
+                  color: Color(0xFF727067),
                   fontSize: 12,
                   height: 1.5),
               textAlign: TextAlign.center,
@@ -566,12 +556,12 @@ class _UploadScreenState extends State<UploadScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('• ',
-                style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                style: TextStyle(color: Color(0xFF08090E), fontSize: 13)),
             Expanded(
               child: Text(text,
-                  style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.55),
-                      fontSize: 12,
+                  style: const TextStyle(
+                      color: Color(0xFF727067),
+                      fontSize: 13,
                       height: 1.4)),
             ),
           ],
@@ -595,27 +585,27 @@ class _StatusChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: found
-              ? Colors.greenAccent.withValues(alpha: 0.1)
-              : Colors.white.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(10),
+              ? const Color(0xFF08090E).withValues(alpha: 0.05)
+              : Colors.white.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(
               color: found
-                  ? Colors.greenAccent.withValues(alpha: 0.4)
-                  : Colors.white12),
+                  ? const Color(0xFF08090E).withValues(alpha: 0.2)
+                  : const Color(0xFFABA69E)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               found ? Icons.check_circle : Icons.radio_button_unchecked,
-              color: found ? Colors.greenAccent : Colors.white30,
+              color: found ? const Color(0xFF08090E) : const Color(0xFFABA69E),
               size: 14,
             ),
             const SizedBox(width: 6),
             Flexible(
               child: Text(label,
                   style: TextStyle(
-                      color: found ? Colors.white : Colors.white38,
+                      color: found ? const Color(0xFF08090E) : const Color(0xFF727067),
                       fontSize: 12,
                       fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis),
@@ -641,25 +631,25 @@ class _StatusCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: isSuccess
-            ? Colors.greenAccent.withValues(alpha: 0.08)
+            ? const Color(0xFF08090E).withValues(alpha: 0.05)
             : isError
-                ? Colors.redAccent.withValues(alpha: 0.08)
-                : Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(10),
+                ? const Color(0xFFC62828).withValues(alpha: 0.08)
+                : Colors.white,
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(
             color: isSuccess
-                ? Colors.greenAccent.withValues(alpha: 0.3)
+                ? const Color(0xFF08090E).withValues(alpha: 0.2)
                 : isError
-                    ? Colors.redAccent.withValues(alpha: 0.3)
-                    : Colors.white12),
+                    ? const Color(0xFFC62828).withValues(alpha: 0.3)
+                    : const Color(0xFFABA69E)),
       ),
       child: Text(message,
           style: TextStyle(
               color: isSuccess
-                  ? Colors.greenAccent
+                  ? const Color(0xFF08090E)
                   : isError
-                      ? Colors.redAccent
-                      : Colors.white60,
+                      ? const Color(0xFFC62828)
+                      : const Color(0xFF727067),
               fontSize: 12,
               height: 1.5)),
     );
@@ -692,13 +682,13 @@ class _FileUploadCard extends StatelessWidget {
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF16213E),
-        borderRadius: BorderRadius.circular(16),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: isReady
-              ? Colors.greenAccent.withValues(alpha: 0.5)
-              : Colors.white.withValues(alpha: 0.08),
-          width: 1.5,
+              ? const Color(0xFF08090E).withValues(alpha: 0.3)
+              : const Color(0xFFABA69E),
+          width: isReady ? 1.5 : 0.5,
         ),
       ),
       child: Column(
@@ -711,13 +701,14 @@ class _FileUploadCard extends StatelessWidget {
                 height: 40,
                 decoration: BoxDecoration(
                   color: isReady
-                      ? Colors.greenAccent.withValues(alpha: 0.15)
-                      : Colors.white.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(10),
+                      ? const Color(0xFF08090E).withValues(alpha: 0.05)
+                      : Colors.transparent,
+                  border: isReady ? null : Border.all(color: const Color(0xFFABA69E), width: 0.5),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
                   isReady ? Icons.check_circle : icon,
-                  color: isReady ? Colors.greenAccent : Colors.white54,
+                  color: isReady ? const Color(0xFF08090E) : const Color(0xFFABA69E),
                   size: 20,
                 ),
               ),
@@ -727,13 +718,13 @@ class _FileUploadCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title,
-                        style: TextStyle(
-                            color: isReady ? Colors.greenAccent : Colors.white,
-                            fontWeight: FontWeight.bold,
+                        style: const TextStyle(
+                            color: Color(0xFF08090E),
+                            fontWeight: FontWeight.w600,
                             fontSize: 14)),
                     Text(subtitle,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.4),
+                        style: const TextStyle(
+                            color: Color(0xFF727067),
                             fontSize: 11)),
                   ],
                 ),
@@ -743,14 +734,15 @@ class _FileUploadCard extends StatelessWidget {
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: isReady
-                      ? Colors.greenAccent.withValues(alpha: 0.12)
-                      : Colors.white.withValues(alpha: 0.05),
+                      ? const Color(0xFF08090E).withValues(alpha: 0.1)
+                      : Colors.transparent,
+                  border: isReady ? null : Border.all(color: const Color(0xFFABA69E), width: 0.5),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   isReady ? 'Ready' : 'Missing',
                   style: TextStyle(
-                      color: isReady ? Colors.greenAccent : Colors.white30,
+                      color: isReady ? const Color(0xFF08090E) : const Color(0xFFABA69E),
                       fontSize: 11,
                       fontWeight: FontWeight.w600),
                 ),
@@ -768,30 +760,32 @@ class _FileUploadCard extends StatelessWidget {
             child: ElevatedButton.icon(
               onPressed: onPick,
               icon: state == _UploadState.loading
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.black))
+                          strokeWidth: 2, color: isReady ? const Color(0xFF08090E) : Colors.white))
                   : Icon(
                       isReady ? Icons.swap_horiz : Icons.upload_file_outlined,
-                      color: Colors.black,
+                      color: isReady ? const Color(0xFF08090E) : Colors.white,
                       size: 16),
               label: Text(
                 state == _UploadState.loading ? 'Uploading…' : buttonLabel,
-                style: const TextStyle(
-                    color: Colors.black,
+                style: TextStyle(
+                    color: isReady ? const Color(0xFF08090E) : Colors.white,
                     fontWeight: FontWeight.w600,
                     fontSize: 13),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: isReady
-                    ? Colors.greenAccent.withValues(alpha: 0.75)
-                    : Colors.greenAccent,
+                    ? const Color(0xFF08090E).withValues(alpha: 0.05)
+                    : const Color(0xFF08090E),
+                elevation: isReady ? 0 : 1,
                 disabledBackgroundColor:
-                    Colors.greenAccent.withValues(alpha: 0.3),
+                    const Color(0xFF08090E).withValues(alpha: 0.3),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
+                    borderRadius: BorderRadius.circular(8)),
+                side: isReady ? BorderSide(color: const Color(0xFF08090E).withValues(alpha: 0.2)) : BorderSide.none,
               ),
             ),
           ),

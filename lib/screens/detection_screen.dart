@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../models/app_config.dart';
@@ -285,289 +286,262 @@ class _DetectionScreenState extends State<DetectionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF16213E),
-        automaticallyImplyLeading: false,
-        title: const Text(
-          '♻️ Waste Classifier',
-          style:
-              TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white),
-            tooltip: 'Bin Settings',
-            onPressed: _openSettings,
-          ),
-          IconButton(
-            icon:
-                const Icon(Icons.swap_horiz_outlined, color: Colors.white),
-            tooltip: 'Change Model',
-            onPressed: _confirmChangeModel,
-          ),
-        ],
-        elevation: 0,
-      ),
+      backgroundColor: Colors.black,
       body: _buildBody(),
     );
   }
 
   Widget _buildBody() {
-    if (_cameraError != null) {
-      return _cameraErrorWidget();
-    }
-    if (!_cameraReady) {
+    if (_cameraError != null) return _cameraErrorWidget();
+    if (!_cameraReady || _cameraController == null) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: Colors.greenAccent),
+            CircularProgressIndicator(color: Color(0xFF4CAF50)),
             SizedBox(height: 16),
-            Text('Initializing camera...',
-                style: TextStyle(color: Colors.white70)),
+            Text('Initializing camera...', style: TextStyle(color: Colors.white70)),
           ],
         ),
       );
     }
 
-    final binColor = _detectedBin != null
-        ? Color(_detectedBin!.colorHex)
-        : Colors.transparent;
+    final size = MediaQuery.of(context).size;
 
-    return Column(
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        // ─── Camera Preview (top 60%) ───
-        Expanded(
-          flex: 6,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Stack(
-              children: [
-                // Camera box with colored border glow
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: _state == DetectionState.detected
-                        ? [
-                            BoxShadow(
-                              color: binColor.withValues(alpha: 0.6),
-                              blurRadius: 18,
-                              spreadRadius: 2,
-                            )
-                          ]
-                        : [],
-                    border: Border.all(
-                      color: _state == DetectionState.detected
-                          ? binColor
-                          : _state == DetectionState.unmapped
-                              ? const Color(0xFFFF9800)
-                              : Colors.white12,
-                      width: _state != DetectionState.waiting ? 2.5 : 1.0,
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: _cameraController != null
-                        ? CameraPreview(_cameraController!)
-                        : Container(color: const Color(0xFF0D0D1A)),
-                  ),
-                ),
-
-                // Confidence bar at bottom of camera
-                if (_state == DetectionState.detected)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                          bottom: Radius.circular(20)),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        height: 5,
-                        width: double.infinity,
-                        child: LinearProgressIndicator(
-                          value: _confidence,
-                          backgroundColor: Colors.transparent,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(binColor),
-                          minHeight: 5,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+        // 1. Full-screen Camera Preview
+        FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: size.width,
+            height: size.width * _cameraController!.value.aspectRatio,
+            child: CameraPreview(_cameraController!),
           ),
         ),
 
-        // ─── Detection Result Panel (bottom 40%) ───
-        Expanded(
-          flex: 4,
-          child: Container(
-            width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: _buildResultPanel(),
-          ),
+        // 2. Translucent 3x3 Grid
+        Positioned.fill(
+          child: CustomPaint(painter: _GridPainter()),
+        ),
+
+        // 3. Central Reticle
+        Center(
+          child: _buildReticle(),
+        ),
+
+        // 4. Floating Top Bar
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 16,
+          left: 16,
+          right: 16,
+          child: _buildTopBar(),
+        ),
+
+        // 5. Result Floating Card
+        Positioned(
+          bottom: 150,
+          left: 20,
+          right: 20,
+          child: _buildFloatingResultCard(),
+        ),
+
+        // 6. Bottom Control Deck (Gradient + Shutter)
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: _buildBottomControlDeck(),
         ),
       ],
     );
   }
 
-  Widget _buildResultPanel() {
-    switch (_state) {
-      case DetectionState.waiting:
-        return _waitingState();
-      case DetectionState.detected:
-        return _detectedState();
-      case DetectionState.unmapped:
-        return _unmappedState();
-    }
+  Widget _buildTopBar() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        IconButton(
+          onPressed: _openSettings,
+          icon: const Icon(Icons.tune, color: Colors.white, size: 28),
+          style: IconButton.styleFrom(backgroundColor: Colors.black45),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black45,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text('Waste Classifier', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold)),
+        ),
+        IconButton(
+          onPressed: _confirmChangeModel,
+          icon: const Icon(Icons.swap_horiz, color: Colors.white, size: 28),
+          style: IconButton.styleFrom(backgroundColor: Colors.black45),
+        ),
+      ],
+    );
   }
 
-  Widget _waitingState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(Icons.search,
-            size: 52,
-            color: Colors.white.withValues(alpha: 0.25)),
-        const SizedBox(height: 16),
-        Text(
-          'Hold a waste item in front of the camera...',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.5),
-            fontSize: 15,
-            height: 1.5,
-          ),
-          textAlign: TextAlign.center,
-        ),
-        if (!_modelReady) ...[
-          const SizedBox(height: 12),
-          Text(
-            'Loading model...',
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.3),
-                fontSize: 12),
+  Widget _buildReticle() {
+    final activeColor = _state == DetectionState.detected && _detectedBin != null 
+        ? Color(_detectedBin!.colorHex) 
+        : (_state == DetectionState.unmapped ? const Color(0xFFFF9800) : Colors.white54);
+        
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      width: _state != DetectionState.waiting ? 180 : 150,
+      height: _state != DetectionState.waiting ? 180 : 150,
+      child: Stack(
+        children: [
+          Positioned(top: 0, left: 0, child: _corner(activeColor, top: true, left: true)),
+          Positioned(top: 0, right: 0, child: _corner(activeColor, top: true, left: false)),
+          Positioned(bottom: 0, left: 0, child: _corner(activeColor, top: false, left: true)),
+          Positioned(bottom: 0, right: 0, child: _corner(activeColor, top: false, left: false)),
+          Center(
+             child: Icon(Icons.add, color: activeColor.withValues(alpha: 0.5), size: 28),
           ),
         ],
-      ],
+      ),
     );
   }
 
-  Widget _detectedState() {
-    final bin = _detectedBin!;
-    final binColor = Color(bin.colorHex);
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(
-          _detectedLabel,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.3,
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+  Widget _corner(Color color, {required bool top, required bool left}) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        border: Border(
+           top: top ? BorderSide(color: color, width: 3) : BorderSide.none,
+           bottom: !top ? BorderSide(color: color, width: 3) : BorderSide.none,
+           left: left ? BorderSide(color: color, width: 3) : BorderSide.none,
+           right: !left ? BorderSide(color: color, width: 3) : BorderSide.none,
         ),
-        const SizedBox(height: 4),
-        Text(
-          '${(_confidence * 100).toStringAsFixed(1)}%',
-          style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 14,
-              fontWeight: FontWeight.w500),
-        ),
-        const SizedBox(height: 16),
-        // Bin badge
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: binColor.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: binColor, width: 1.5),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(bin.emoji, style: const TextStyle(fontSize: 22)),
-              const SizedBox(width: 8),
-              Text(
-                bin.name,
-                style: TextStyle(
-                  color: binColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _unmappedState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildFloatingResultCard() {
+    if (_state == DetectionState.waiting) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF16213E).withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Column(
           children: [
-            const Text('⚠️', style: TextStyle(fontSize: 22)),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                _detectedLabel,
-                style: const TextStyle(
-                  color: Color(0xFFFF9800),
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
+             Text('Point camera at an object', style: GoogleFonts.inter(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+             if (!_modelReady)
+               Padding(
+                 padding: const EdgeInsets.only(top: 4),
+                 child: Text('Loading model...', style: GoogleFonts.inter(color: Colors.white54, fontSize: 11)),
+               ),
           ],
         ),
-        const SizedBox(height: 8),
-        const Text(
-          'Not assigned to any bin',
-          style: TextStyle(color: Colors.white70, fontSize: 14),
+      );
+    }
+    
+    if (_state == DetectionState.unmapped) {
+       return AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF16213E).withValues(alpha: 0.85),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFFFF9800), width: 1.5),
         ),
-        const SizedBox(height: 4),
-        Text(
-          'This item is not assigned to any bin.\nGo to Settings to map it.',
-          style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.4),
-              fontSize: 12,
-              height: 1.5),
-          textAlign: TextAlign.center,
+        child: Column(
+          children: [
+             const Text('⚠️', style: TextStyle(fontSize: 24)),
+             const SizedBox(height: 8),
+             Text(_detectedLabel, style: GoogleFonts.outfit(color: const Color(0xFFFF9800), fontWeight: FontWeight.bold, fontSize: 18), textAlign: TextAlign.center),
+             const SizedBox(height: 4),
+             Text('Not mapped to any bin', style: GoogleFonts.inter(color: Colors.white70)),
+          ],
         ),
-        const SizedBox(height: 16),
-        ElevatedButton.icon(
-          onPressed: _openSettings,
-          icon: const Icon(Icons.settings_outlined, size: 16),
-          label: const Text('Assign Now'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFFF9800),
-            foregroundColor: Colors.black,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          ),
+       );
+    }
+
+    final bin = _detectedBin!;
+    final binColor = Color(bin.colorHex);
+    return AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF16213E).withValues(alpha: 0.85),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: binColor, width: 2),
         ),
-      ],
+        child: Column(
+          children: [
+             Text(_detectedLabel, style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 24), textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis),
+             const SizedBox(height: 4),
+             Text('${(_confidence * 100).toStringAsFixed(1)}% Match', style: GoogleFonts.inter(color: Colors.white54, fontSize: 13)),
+             const SizedBox(height: 12),
+             Container(
+               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+               decoration: BoxDecoration(
+                 color: binColor,
+                 borderRadius: BorderRadius.circular(20),
+               ),
+               child: Row(
+                 mainAxisSize: MainAxisSize.min,
+                 children: [
+                   Text(bin.emoji, style: const TextStyle(fontSize: 20)),
+                   const SizedBox(width: 8),
+                   Text(bin.name, style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16)),
+                 ],
+               ),
+             ),
+          ],
+        ),
+    );
+  }
+
+  Widget _buildBottomControlDeck() {
+    return Container(
+      height: 140,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.8),
+            Colors.transparent,
+          ],
+        ),
+      ),
+      child: Center(
+         child: GestureDetector(
+            onTap: () {
+              // Dummy shutter action
+            },
+            child: Container(
+               width: 72,
+               height: 72,
+               decoration: BoxDecoration(
+                  color: const Color(0xFF4CAF50).withValues(alpha: 0.9),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white38, width: 4),
+               ),
+               child: Center(
+                  child: Container(
+                     width: 56,
+                     height: 56,
+                     decoration: BoxDecoration(
+                        color: const Color(0xFF4CAF50),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.black26, width: 1.5),
+                     ),
+                  ),
+               ),
+            ),
+         ),
+      ),
     );
   }
 
@@ -578,18 +552,29 @@ class _DetectionScreenState extends State<DetectionScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.videocam_off,
-                size: 64, color: Colors.redAccent),
+            const Icon(Icons.videocam_off, size: 64, color: Colors.redAccent),
             const SizedBox(height: 16),
-            Text(
-              _cameraError!,
-              style:
-                  const TextStyle(color: Colors.redAccent, fontSize: 15),
-              textAlign: TextAlign.center,
-            ),
+            Text(_cameraError!, style: GoogleFonts.inter(color: Colors.redAccent, fontSize: 15), textAlign: TextAlign.center),
           ],
         ),
       ),
     );
   }
+}
+
+class _GridPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.15)
+      ..strokeWidth = 1.0;
+
+    canvas.drawLine(Offset(size.width / 3, 0), Offset(size.width / 3, size.height), paint);
+    canvas.drawLine(Offset(size.width * 2 / 3, 0), Offset(size.width * 2 / 3, size.height), paint);
+    canvas.drawLine(Offset(0, size.height / 3), Offset(size.width, size.height / 3), paint);
+    canvas.drawLine(Offset(0, size.height * 2 / 3), Offset(size.width, size.height * 2 / 3), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
