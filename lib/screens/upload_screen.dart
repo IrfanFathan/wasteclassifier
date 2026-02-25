@@ -5,6 +5,8 @@ import '../utils/config_manager.dart';
 import '../utils/model_manager.dart';
 import 'bin_setup_screen.dart';
 
+enum _UploadState { idle, loading, success, error }
+
 class UploadScreen extends StatefulWidget {
   const UploadScreen({super.key});
 
@@ -12,425 +14,711 @@ class UploadScreen extends StatefulWidget {
   State<UploadScreen> createState() => _UploadScreenState();
 }
 
-class _UploadScreenState extends State<UploadScreen> {
+class _UploadScreenState extends State<UploadScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  // Shared file state
   bool _modelExists = false;
   bool _labelsExist = false;
-  bool _loadingModel = false;
-  bool _loadingLabels = false;
-  bool _proceeding = false;
+
+  // ZIP tab state
+  _UploadState _zipState = _UploadState.idle;
+  String _zipStatus = '';
+
+  // Separate files tab state
+  _UploadState _modelState = _UploadState.idle;
+  _UploadState _labelsState = _UploadState.idle;
   String _modelStatus = '';
   String _labelsStatus = '';
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _checkExistingFiles();
   }
 
-  /// On every launch, check if files already exist on disk.
-  /// Files are stored in getApplicationDocumentsDirectory() which persists
-  /// through app closes and device reboots automatically by the OS.
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
   Future<void> _checkExistingFiles() async {
     final modelPath = await ModelManager.getModelPath();
     final labelsPath = await ModelManager.getLabelsPath();
-    final modelFile = File(modelPath);
-    final labelsFile = File(labelsPath);
-
     if (!mounted) return;
+    final modelExists = File(modelPath).existsSync();
+    final labelsExists = File(labelsPath).existsSync();
     setState(() {
-      _modelExists = modelFile.existsSync();
-      _labelsExist = labelsFile.existsSync();
-      _modelStatus = _modelExists ? '✅ model.tflite already loaded' : '';
-      _labelsStatus = _labelsExist ? '✅ labels.txt already loaded' : '';
+      _modelExists = modelExists;
+      _labelsExist = labelsExists;
+      if (modelExists) _modelStatus = '✅ model.tflite already on device';
+      if (labelsExists) _labelsStatus = '✅ labels.txt already on device';
+      if (modelExists) _modelState = _UploadState.success;
+      if (labelsExists) _labelsState = _UploadState.success;
     });
   }
 
-  Future<void> _pickModelFile() async {
+  // ── ZIP upload ─────────────────────────────────────────────────────────────
+  Future<void> _uploadZip() async {
     setState(() {
-      _loadingModel = true;
-      _modelStatus = 'Selecting model.tflite…';
+      _zipState = _UploadState.loading;
+      _zipStatus = 'Opening file picker…';
     });
-
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.any,
-        dialogTitle: 'Select model.tflite',
-      );
-
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.any, dialogTitle: 'Select .zip file');
       if (result == null || result.files.isEmpty) {
         setState(() {
-          _loadingModel = false;
-          _modelStatus = 'Selection cancelled.';
+          _zipState = _UploadState.idle;
+          _zipStatus = 'Cancelled.';
         });
         return;
       }
-
       final path = result.files.single.path;
-      if (path == null || !path.toLowerCase().endsWith('.tflite')) {
+      if (path == null || !path.toLowerCase().endsWith('.zip')) {
         setState(() {
-          _loadingModel = false;
-          _modelStatus = '❌ Invalid file — must be a .tflite file.';
+          _zipState = _UploadState.error;
+          _zipStatus = '❌ Please pick a .zip file.';
         });
         return;
       }
-
-      setState(() => _modelStatus = 'Saving model.tflite…');
-      await ModelManager.saveModelFile(path);
-
-      setState(() {
-        _modelExists = true;
-        _loadingModel = false;
-        _modelStatus = '✅ model.tflite saved successfully!';
-      });
-    } catch (e) {
-      setState(() {
-        _loadingModel = false;
-        _modelStatus = '❌ Error: $e';
-      });
-    }
-  }
-
-  Future<void> _pickLabelsFile() async {
-    setState(() {
-      _loadingLabels = true;
-      _labelsStatus = 'Selecting labels.txt…';
-    });
-
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.any,
-        dialogTitle: 'Select labels.txt',
-      );
-
-      if (result == null || result.files.isEmpty) {
+      setState(() => _zipStatus = 'Extracting…');
+      final extracted = await ModelManager.extractZip(path);
+      if (!extracted.success) {
         setState(() {
-          _loadingLabels = false;
-          _labelsStatus = 'Selection cancelled.';
+          _zipState = _UploadState.error;
+          _zipStatus = '❌ ${extracted.error}';
         });
         return;
       }
-
-      final path = result.files.single.path;
-      if (path == null) {
-        setState(() {
-          _loadingLabels = false;
-          _labelsStatus = '❌ Could not read file path.';
-        });
-        return;
-      }
-
-      setState(() => _labelsStatus = 'Parsing and saving labels.txt…');
-      await ModelManager.saveLabelsFile(path);
-
-      // Parse and save labels list to SharedPreferences
+      setState(() => _zipStatus = 'Parsing labels…');
       final labels = await ModelManager.parseLabelsFile();
       if (labels.isEmpty) {
         setState(() {
-          _loadingLabels = false;
-          _labelsStatus = '❌ labels.txt appears empty or unreadable.';
+          _zipState = _UploadState.error;
+          _zipStatus = '❌ labels.txt is empty or unreadable.';
         });
         return;
       }
-
       await ConfigManager.saveLabels(labels);
-
+      await ConfigManager.setModelLoaded(true);
       setState(() {
+        _zipState = _UploadState.success;
+        _modelExists = true;
         _labelsExist = true;
-        _loadingLabels = false;
-        _labelsStatus = '✅ labels.txt saved! (${labels.length} classes found)';
+        _zipStatus =
+            '✅ Extracted ${labels.length} classes: ${labels.take(3).join(', ')}${labels.length > 3 ? '…' : ''}';
       });
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
+      _navigateNext(labels);
     } catch (e) {
       setState(() {
-        _loadingLabels = false;
-        _labelsStatus = '❌ Error: $e';
+        _zipState = _UploadState.error;
+        _zipStatus = '❌ $e';
       });
     }
   }
 
-  Future<void> _proceed() async {
-    if (!_modelExists || !_labelsExist) return;
-    setState(() => _proceeding = true);
+  // ── Separate .tflite upload ────────────────────────────────────────────────
+  Future<void> _uploadModelFile() async {
+    setState(() {
+      _modelState = _UploadState.loading;
+      _modelStatus = 'Selecting model.tflite…';
+    });
+    try {
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.any, dialogTitle: 'Select model.tflite');
+      if (result == null || result.files.isEmpty) {
+        setState(() {
+          _modelState = _UploadState.idle;
+          _modelStatus = 'Cancelled.';
+        });
+        return;
+      }
+      final path = result.files.single.path;
+      if (path == null || !path.toLowerCase().endsWith('.tflite')) {
+        setState(() {
+          _modelState = _UploadState.error;
+          _modelStatus = '❌ Must be a .tflite file.';
+        });
+        return;
+      }
+      setState(() => _modelStatus = 'Saving…');
+      await ModelManager.saveModelFile(path);
+      setState(() {
+        _modelState = _UploadState.success;
+        _modelExists = true;
+        _modelStatus = '✅ model.tflite saved!';
+      });
+    } catch (e) {
+      setState(() {
+        _modelState = _UploadState.error;
+        _modelStatus = '❌ $e';
+      });
+    }
+  }
 
-    await ConfigManager.setModelLoaded(true);
-    final labels = await ConfigManager.loadLabels();
+  // ── Separate labels.txt upload ─────────────────────────────────────────────
+  Future<void> _uploadLabelsFile() async {
+    setState(() {
+      _labelsState = _UploadState.loading;
+      _labelsStatus = 'Selecting labels.txt…';
+    });
+    try {
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.any, dialogTitle: 'Select labels.txt');
+      if (result == null || result.files.isEmpty) {
+        setState(() {
+          _labelsState = _UploadState.idle;
+          _labelsStatus = 'Cancelled.';
+        });
+        return;
+      }
+      final path = result.files.single.path;
+      if (path == null) {
+        setState(() {
+          _labelsState = _UploadState.error;
+          _labelsStatus = '❌ Could not get file path.';
+        });
+        return;
+      }
+      setState(() => _labelsStatus = 'Parsing labels…');
+      await ModelManager.saveLabelsFile(path);
+      final labels = await ModelManager.parseLabelsFile();
+      if (labels.isEmpty) {
+        setState(() {
+          _labelsState = _UploadState.error;
+          _labelsStatus = '❌ No classes found in labels.txt.';
+        });
+        return;
+      }
+      await ConfigManager.saveLabels(labels);
+      setState(() {
+        _labelsState = _UploadState.success;
+        _labelsExist = true;
+        _labelsStatus =
+            '✅ ${labels.length} classes: ${labels.take(3).join(', ')}${labels.length > 3 ? '…' : ''}';
+      });
+    } catch (e) {
+      setState(() {
+        _labelsState = _UploadState.error;
+        _labelsStatus = '❌ $e';
+      });
+    }
+  }
+
+
+  void _navigateNext(List<String> labels) async {
     final config = await ConfigManager.loadConfig();
-
     if (!mounted) return;
-
     if (config != null && config.bins.isNotEmpty) {
-      // Config already exists — go straight to detection
       Navigator.of(context).pushReplacementNamed('/detect');
     } else {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => BinSetupScreen(labels: labels),
-        ),
+        MaterialPageRoute(builder: (_) => BinSetupScreen(labels: labels)),
       );
     }
   }
 
-  Future<void> _removeFile(String type) async {
+  Future<void> _clearFiles() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF16213E),
-        title: Text('Remove $type',
-            style: const TextStyle(color: Colors.white)),
-        content: Text(
-          'Are you sure you want to remove the $type file? '
-          'You will need to re-upload it.',
-          style: const TextStyle(color: Colors.white70),
+        title: const Text('Remove model files',
+            style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'This deletes model.tflite and labels.txt from the app storage.',
+          style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove',
-                style: TextStyle(color: Colors.redAccent)),
+            child: const Text('Remove', style: TextStyle(color: Colors.redAccent)),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
-
-    if (type == 'model.tflite') {
-      final path = await ModelManager.getModelPath();
-      final f = File(path);
-      if (f.existsSync()) await f.delete();
-      setState(() {
-        _modelExists = false;
-        _modelStatus = 'model.tflite removed.';
-      });
-    } else {
-      final path = await ModelManager.getLabelsPath();
-      final f = File(path);
-      if (f.existsSync()) await f.delete();
-      await ConfigManager.saveLabels([]);
-      setState(() {
-        _labelsExist = false;
-        _labelsStatus = 'labels.txt removed.';
-      });
-    }
+    await ModelManager.deleteModelFiles();
+    await ConfigManager.saveLabels([]);
+    await ConfigManager.setModelLoaded(false);
+    setState(() {
+      _modelExists = false;
+      _labelsExist = false;
+      _zipState = _UploadState.idle;
+      _zipStatus = '';
+      _modelState = _UploadState.idle;
+      _labelsState = _UploadState.idle;
+      _modelStatus = '';
+      _labelsStatus = '';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final bothReady = _modelExists && _labelsExist;
-
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ─── Header ───
-                const Center(
-                  child: Column(
-                    children: [
-                      Text(
-                        '♻️ Waste Classifier',
-                        style: TextStyle(
+        child: Column(
+          children: [
+            // ── Header ──────────────────────────────────────────────────────
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                children: [
+                  const Text('♻️ Waste Classifier',
+                      style: TextStyle(
                           color: Colors.white,
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'Upload your Teachable Machine model files',
-                        style:
-                            TextStyle(color: Colors.white60, fontSize: 13),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 32),
-
-                // ─── Export guide chip ───
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.greenAccent.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: Colors.greenAccent.withValues(alpha: 0.25)),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.info_outline,
-                          color: Colors.greenAccent, size: 16),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Export from Teachable Machine → TensorFlow Lite → Floating Point',
-                          style: TextStyle(
-                              color: Colors.greenAccent, fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 28),
-
-                // ─── File 1: model.tflite ───
-                _fileCard(
-                  icon: Icons.memory_outlined,
-                  title: 'model.tflite',
-                  subtitle: 'The TFLite neural network weights file',
-                  isLoaded: _modelExists,
-                  isLoading: _loadingModel,
-                  statusMessage: _modelStatus,
-                  onUpload: _loadingModel ? null : _pickModelFile,
-                  onRemove: _modelExists
-                      ? () => _removeFile('model.tflite')
-                      : null,
-                ),
-                const SizedBox(height: 16),
-
-                // ─── File 2: labels.txt ───
-                _fileCard(
-                  icon: Icons.label_outline,
-                  title: 'labels.txt',
-                  subtitle: 'Class names exported alongside your model',
-                  isLoaded: _labelsExist,
-                  isLoading: _loadingLabels,
-                  statusMessage: _labelsStatus,
-                  onUpload: _loadingLabels ? null : _pickLabelsFile,
-                  onRemove: _labelsExist
-                      ? () => _removeFile('labels.txt')
-                      : null,
-                ),
-
-                const SizedBox(height: 32),
-
-                // ─── Proceed button ───
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton.icon(
-                    onPressed:
-                        (bothReady && !_proceeding) ? _proceed : null,
-                    icon: _proceeding
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.black),
-                          )
-                        : Icon(
-                            bothReady
-                                ? Icons.check_circle_outline
-                                : Icons.lock_outline,
-                            color: Colors.black,
-                          ),
-                    label: Text(
-                      _proceeding
-                          ? 'Loading…'
-                          : bothReady
-                              ? 'Continue → Set Up Bins'
-                              : 'Upload both files to continue',
-                      style: const TextStyle(
-                        color: Colors.black,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: bothReady
-                          ? Colors.greenAccent
-                          : Colors.white24,
-                      disabledBackgroundColor: Colors.white12,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // ─── Persistence note ───
-                Center(
-                  child: Text(
-                    '🔒 Files are stored permanently inside the app.\n'
-                    'They will remain even after closing or rebooting.',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.35),
-                      fontSize: 11,
-                      height: 1.6,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text('Upload your Teachable Machine model',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.5),
+                          fontSize: 13)),
+                ],
+              ),
             ),
-          ),
+
+            // ── File status row ──────────────────────────────────────────────
+            if (_modelExists || _labelsExist)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    _StatusChip(
+                        label: 'model.tflite', found: _modelExists),
+                    const SizedBox(width: 8),
+                    _StatusChip(
+                        label: 'labels.txt', found: _labelsExist),
+                  ],
+                ),
+              ),
+
+            if (_modelExists || _labelsExist) const SizedBox(height: 12),
+
+            // ── Tab bar ─────────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF16213E),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  indicator: BoxDecoration(
+                    color: Colors.greenAccent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  labelColor: Colors.black,
+                  unselectedLabelColor: Colors.white54,
+                  labelStyle: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 13),
+                  dividerColor: Colors.transparent,
+                  tabs: const [
+                    Tab(text: '📦  Upload ZIP'),
+                    Tab(text: '📂  Separate Files'),
+                  ],
+                ),
+              ),
+            ),
+
+            // ── Tab views ───────────────────────────────────────────────────
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildZipTab(),
+                  _buildSeparateTab(),
+                ],
+              ),
+            ),
+
+            // ── Continue / remove buttons ────────────────────────────────────
+            if (_modelExists && _labelsExist)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          final labels = await ConfigManager.loadLabels();
+                          if (!mounted) return;
+                          _navigateNext(labels);
+                        },
+                        icon: const Icon(Icons.arrow_forward,
+                            color: Colors.black, size: 18),
+                        label: const Text('Continue → Set Up Bins',
+                            style: TextStyle(
+                                color: Colors.black,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.greenAccent,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: _clearFiles,
+                      icon: const Icon(Icons.delete_outline,
+                          color: Colors.redAccent, size: 15),
+                      label: const Text('Remove all files',
+                          style:
+                              TextStyle(color: Colors.redAccent, fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ),
+
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                '🔒 Files persist after close or reboot',
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    fontSize: 11),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _fileCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool isLoaded,
-    required bool isLoading,
-    required String statusMessage,
-    required VoidCallback? onUpload,
-    required VoidCallback? onRemove,
-  }) {
-    final borderColor = isLoaded
-        ? Colors.greenAccent.withValues(alpha: 0.5)
-        : Colors.white.withValues(alpha: 0.1);
+  // ── ZIP tab ----------------------------------------------------------------
+  Widget _buildZipTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          // Animated icon
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 350),
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              color: const Color(0xFF16213E),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: _zipState == _UploadState.success
+                    ? Colors.greenAccent
+                    : _zipState == _UploadState.error
+                        ? Colors.redAccent
+                        : Colors.white24,
+                width: 2,
+              ),
+            ),
+            child: Center(
+              child: _zipState == _UploadState.loading
+                  ? const CircularProgressIndicator(
+                      color: Colors.greenAccent, strokeWidth: 3)
+                  : Icon(
+                      _zipState == _UploadState.success
+                          ? Icons.check_circle_outline
+                          : _zipState == _UploadState.error
+                              ? Icons.error_outline
+                              : Icons.folder_zip_outlined,
+                      color: _zipState == _UploadState.success
+                          ? Colors.greenAccent
+                          : _zipState == _UploadState.error
+                              ? Colors.redAccent
+                              : Colors.white38,
+                      size: 48,
+                    ),
+            ),
+          ),
+          const SizedBox(height: 20),
 
+          // Info card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF16213E),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Teachable Machine export steps:',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12)),
+                const SizedBox(height: 8),
+                _infoLine('Export Model → TensorFlow Lite → Floating Point'),
+                _infoLine('Download the .zip — it includes both files'),
+                _infoLine('Tap below to pick the .zip'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Upload button
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton.icon(
+              onPressed: _zipState == _UploadState.loading ? null : _uploadZip,
+              icon: _zipState == _UploadState.loading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.black))
+                  : const Icon(Icons.folder_zip_outlined,
+                      color: Colors.black, size: 20),
+              label: Text(
+                _zipState == _UploadState.loading
+                    ? _zipStatus
+                    : '  Pick .zip File',
+                style: const TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.greenAccent,
+                disabledBackgroundColor:
+                    Colors.greenAccent.withValues(alpha: 0.4),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+          ),
+
+          // Status
+          if (_zipStatus.isNotEmpty && _zipState != _UploadState.loading) ...[
+            const SizedBox(height: 14),
+            _StatusCard(message: _zipStatus, state: _zipState),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Separate files tab -----------------------------------------------------
+  Widget _buildSeparateTab() {
+    final bothReady = _modelExists && _labelsExist;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          // model.tflite card
+          _FileUploadCard(
+            icon: Icons.memory_outlined,
+            title: 'model.tflite',
+            subtitle: 'Neural network weights file',
+            state: _modelState,
+            statusMessage: _modelStatus,
+            buttonLabel: _modelExists ? 'Replace model.tflite' : 'Pick model.tflite',
+            onPick: _modelState == _UploadState.loading ? null : _uploadModelFile,
+          ),
+          const SizedBox(height: 14),
+          // labels.txt card
+          _FileUploadCard(
+            icon: Icons.label_outline,
+            title: 'labels.txt',
+            subtitle: 'Class names exported from your model',
+            state: _labelsState,
+            statusMessage: _labelsStatus,
+            buttonLabel: _labelsExists ? 'Replace labels.txt' : 'Pick labels.txt',
+            onPick: _labelsState == _UploadState.loading ? null : _uploadLabelsFile,
+          ),
+          const SizedBox(height: 20),
+
+          if (!bothReady)
+            Text(
+              'Upload both files to enable the Continue button below',
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.35),
+                  fontSize: 12,
+                  height: 1.5),
+              textAlign: TextAlign.center,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoLine(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('• ',
+                style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
+            Expanded(
+              child: Text(text,
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      fontSize: 12,
+                      height: 1.4)),
+            ),
+          ],
+        ),
+      );
+
+  bool get _labelsExists => _labelsExist;
+}
+
+// ── Reusable widgets ─────────────────────────────────────────────────────────
+
+class _StatusChip extends StatelessWidget {
+  final String label;
+  final bool found;
+  const _StatusChip({required this.label, required this.found});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: found
+              ? Colors.greenAccent.withValues(alpha: 0.1)
+              : Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: found
+                  ? Colors.greenAccent.withValues(alpha: 0.4)
+                  : Colors.white12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              found ? Icons.check_circle : Icons.radio_button_unchecked,
+              color: found ? Colors.greenAccent : Colors.white30,
+              size: 14,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(label,
+                  style: TextStyle(
+                      color: found ? Colors.white : Colors.white38,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusCard extends StatelessWidget {
+  final String message;
+  final _UploadState state;
+  const _StatusCard({required this.message, required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final isSuccess = state == _UploadState.success;
+    final isError = state == _UploadState.error;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isSuccess
+            ? Colors.greenAccent.withValues(alpha: 0.08)
+            : isError
+                ? Colors.redAccent.withValues(alpha: 0.08)
+                : Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: isSuccess
+                ? Colors.greenAccent.withValues(alpha: 0.3)
+                : isError
+                    ? Colors.redAccent.withValues(alpha: 0.3)
+                    : Colors.white12),
+      ),
+      child: Text(message,
+          style: TextStyle(
+              color: isSuccess
+                  ? Colors.greenAccent
+                  : isError
+                      ? Colors.redAccent
+                      : Colors.white60,
+              fontSize: 12,
+              height: 1.5)),
+    );
+  }
+}
+
+class _FileUploadCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final _UploadState state;
+  final String statusMessage;
+  final String buttonLabel;
+  final VoidCallback? onPick;
+
+  const _FileUploadCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.state,
+    required this.statusMessage,
+    required this.buttonLabel,
+    required this.onPick,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isReady = state == _UploadState.success;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF16213E),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: borderColor, width: 1.5),
-        boxShadow: isLoaded
-            ? [
-                BoxShadow(
-                  color: Colors.greenAccent.withValues(alpha: 0.08),
-                  blurRadius: 12,
-                  spreadRadius: 1,
-                )
-              ]
-            : [],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isReady
+              ? Colors.greenAccent.withValues(alpha: 0.5)
+              : Colors.white.withValues(alpha: 0.08),
+          width: 1.5,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              // Icon badge
               Container(
-                width: 44,
-                height: 44,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  color: isLoaded
+                  color: isReady
                       ? Colors.greenAccent.withValues(alpha: 0.15)
                       : Colors.white.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
-                  isLoaded ? Icons.check_circle : icon,
-                  color: isLoaded ? Colors.greenAccent : Colors.white54,
-                  size: 22,
+                  isReady ? Icons.check_circle : icon,
+                  color: isReady ? Colors.greenAccent : Colors.white54,
+                  size: 20,
                 ),
               ),
               const SizedBox(width: 12),
@@ -438,138 +726,74 @@ class _UploadScreenState extends State<UploadScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: isLoaded ? Colors.greenAccent : Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.45),
-                        fontSize: 11,
-                      ),
-                    ),
+                    Text(title,
+                        style: TextStyle(
+                            color: isReady ? Colors.greenAccent : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14)),
+                    Text(subtitle,
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.4),
+                            fontSize: 11)),
                   ],
                 ),
               ),
-              // Status badge
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isLoaded
+                  color: isReady
                       ? Colors.greenAccent.withValues(alpha: 0.12)
-                      : Colors.white.withValues(alpha: 0.06),
+                      : Colors.white.withValues(alpha: 0.05),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  isLoaded ? 'Ready' : 'Missing',
+                  isReady ? 'Ready' : 'Missing',
                   style: TextStyle(
-                    color: isLoaded ? Colors.greenAccent : Colors.white38,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
+                      color: isReady ? Colors.greenAccent : Colors.white30,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600),
                 ),
               ),
             ],
           ),
-
-          // Status message
           if (statusMessage.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: statusMessage.startsWith('❌')
-                    ? Colors.redAccent.withValues(alpha: 0.08)
-                    : statusMessage.startsWith('✅')
-                        ? Colors.greenAccent.withValues(alpha: 0.08)
-                        : Colors.white.withValues(alpha: 0.04),
-                borderRadius: BorderRadius.circular(8),
+            _StatusCard(message: statusMessage, state: state),
+          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 42,
+            child: ElevatedButton.icon(
+              onPressed: onPick,
+              icon: state == _UploadState.loading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.black))
+                  : Icon(
+                      isReady ? Icons.swap_horiz : Icons.upload_file_outlined,
+                      color: Colors.black,
+                      size: 16),
+              label: Text(
+                state == _UploadState.loading ? 'Uploading…' : buttonLabel,
+                style: const TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13),
               ),
-              child: Text(
-                statusMessage,
-                style: TextStyle(
-                  color: statusMessage.startsWith('❌')
-                      ? Colors.redAccent
-                      : statusMessage.startsWith('✅')
-                          ? Colors.greenAccent
-                          : Colors.white60,
-                  fontSize: 12,
-                ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isReady
+                    ? Colors.greenAccent.withValues(alpha: 0.75)
+                    : Colors.greenAccent,
+                disabledBackgroundColor:
+                    Colors.greenAccent.withValues(alpha: 0.3),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
               ),
             ),
-          ],
-
-          const SizedBox(height: 12),
-
-          // Buttons row
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: onUpload,
-                  icon: isLoading
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.black),
-                        )
-                      : Icon(
-                          isLoaded
-                              ? Icons.swap_horiz
-                              : Icons.upload_file_outlined,
-                          size: 16,
-                          color: Colors.black,
-                        ),
-                  label: Text(
-                    isLoading
-                        ? 'Uploading…'
-                        : isLoaded
-                            ? 'Replace File'
-                            : 'Upload $title',
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isLoaded
-                        ? Colors.greenAccent.withValues(alpha: 0.75)
-                        : Colors.greenAccent,
-                    disabledBackgroundColor:
-                        Colors.greenAccent.withValues(alpha: 0.3),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                  ),
-                ),
-              ),
-              if (isLoaded && onRemove != null) ...[
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: onRemove,
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.redAccent),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 10, horizontal: 12),
-                  ),
-                  child: const Icon(Icons.delete_outline,
-                      color: Colors.redAccent, size: 18),
-                ),
-              ],
-            ],
           ),
         ],
       ),
