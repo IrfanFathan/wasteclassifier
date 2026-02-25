@@ -490,8 +490,9 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF16213E),
-        borderRadius: BorderRadius.circular(14),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFABA69E), width: 0.5),
       ),
       child: ListTile(
         contentPadding:
@@ -499,7 +500,7 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
         leading: Text(bin.emoji, style: const TextStyle(fontSize: 26)),
         title: Text(bin.name,
             style: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.w600)),
+                color: Color(0xFF08090E), fontWeight: FontWeight.w600)),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -512,17 +513,17 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
                 color: Color(bin.colorHex),
                 shape: BoxShape.circle,
                 border:
-                    Border.all(color: Colors.white.withValues(alpha: 0.2), width: 1),
+                    Border.all(color: const Color(0xFFABA69E), width: 1),
               ),
             ),
             IconButton(
               icon: const Icon(Icons.edit_outlined,
-                  color: Colors.white60, size: 20),
+                  color: Color(0xFF727067), size: 20),
               onPressed: () => _showAddEditBinSheet(existing: bin),
             ),
             IconButton(
               icon: const Icon(Icons.delete_outline,
-                  color: Colors.redAccent, size: 20),
+                  color: Color(0xFFC62828), size: 20),
               onPressed: () => _deleteBin(bin.id),
             ),
           ],
@@ -536,17 +537,17 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
 
     // Build dropdown items
     final items = <DropdownMenuItem<String?>>[
-      DropdownMenuItem<String?>(
+      const DropdownMenuItem<String?>(
         value: null,
         child: Text(
           'Leave Unmapped',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.45)),
+          style: TextStyle(color: Color(0xFFABA69E)),
         ),
       ),
       DropdownMenuItem<String?>(
         value: _nothingOption,
-        child: const Text('Nothing / Skip',
-            style: TextStyle(color: Colors.orangeAccent)),
+        child: Text('Nothing / Skip',
+            style: TextStyle(color: Colors.orange.shade700)),
       ),
       ..._bins.map(
         (bin) => DropdownMenuItem<String?>(
@@ -564,7 +565,7 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
               ),
               Text(
                 '${bin.emoji} ${bin.name}',
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF08090E)),
               ),
             ],
           ),
@@ -575,9 +576,9 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
     // Indicator dot color
     Color dotColor;
     if (currentAssignment == null) {
-      dotColor = Colors.white24;
+      dotColor = const Color(0xFFABA69E).withValues(alpha: 0.5);
     } else if (currentAssignment == _nothingOption) {
-      dotColor = Colors.orange;
+      dotColor = Colors.orange.shade700;
     } else {
       final bin = _bins.firstWhere((b) => b.id == currentAssignment,
           orElse: () => BinCategory(
@@ -589,8 +590,9 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF16213E),
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFABA69E), width: 0.5),
       ),
       child: Row(
         children: [
@@ -604,7 +606,7 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
+              style: const TextStyle(color: Color(0xFF08090E), fontSize: 13),
             ),
           ),
           const SizedBox(width: 8),
@@ -614,11 +616,11 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
               items: items,
               onChanged: (val) =>
                   setState(() => _labelAssignments[label] = val),
-              dropdownColor: const Color(0xFF16213E),
-              underline: Container(height: 1, color: Colors.white12),
+              dropdownColor: Colors.white,
+              underline: Container(height: 1, color: const Color(0xFFABA69E).withValues(alpha: 0.3)),
               isExpanded: true,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              icon: const Icon(Icons.arrow_drop_down, color: Colors.white54),
+              style: const TextStyle(color: Color(0xFF08090E), fontSize: 13),
+              icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF727067)),
             ),
           ),
         ],
