@@ -22,25 +22,25 @@ class WasteClassifierApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFFCFEFF),
+        scaffoldBackgroundColor: const Color(0xFFF9FAFB),
         colorScheme: const ColorScheme(
           brightness: Brightness.light,
-          primary: Color(0xFF08090E),
+          primary: Color(0xFF14171A),
           onPrimary: Colors.white,
-          secondary: Color(0xFF727067),
+          secondary: Color(0xFF6B7280),
           onSecondary: Colors.white,
           error: Color(0xFFC62828),
           onError: Colors.white,
           surface: Colors.white,
-          onSurface: Color(0xFF08090E),
+          onSurface: Color(0xFF14171A),
         ),
         appBarTheme: const AppBarTheme(
           elevation: 0,
-          backgroundColor: Color(0xFFFCFEFF),
-          foregroundColor: Color(0xFF08090E),
+          backgroundColor: Color(0xFFF9FAFB),
+          foregroundColor: Color(0xFF14171A),
           centerTitle: false,
         ),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           elevation: 1,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
@@ -49,7 +49,7 @@ class WasteClassifierApp extends StatelessWidget {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF08090E),
+            backgroundColor: const Color(0xFF14171A),
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(
               vertical: 12,
@@ -58,10 +58,11 @@ class WasteClassifierApp extends StatelessWidget {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
+            elevation: 0,
           ),
         ),
         dividerTheme: const DividerThemeData(
-          color: Color(0xFFABA69E),
+          color: Color(0xFFD1D5DB),
           thickness: 0.5,
         ),
         textTheme: GoogleFonts.interTextTheme(
@@ -69,34 +70,34 @@ class WasteClassifierApp extends StatelessWidget {
             displayLarge: TextStyle(
               fontSize: 34,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF08090E),
+              color: Color(0xFF14171A),
             ),
             headlineMedium: TextStyle(
               fontSize: 26,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF08090E),
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF14171A),
             ),
             titleMedium: TextStyle(
               fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF08090E),
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF14171A),
             ),
             bodyLarge: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w400,
-              color: Color(0xFF08090E),
+              color: Color(0xFF14171A),
               height: 1.5,
             ),
             bodyMedium: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w400,
-              color: Color(0xFF727067),
+              color: Color(0xFF6B7280),
               height: 1.5,
             ),
             labelSmall: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w400,
-              color: Color(0xFFABA69E),
+              color: Color(0xFFD1D5DB),
             ),
           ),
         ),
@@ -172,13 +173,13 @@ class _AppStartupState extends State<_AppStartup> {
             Text(
               'Waste Classifier',
               style: GoogleFonts.inter(
-                color: const Color(0xFF08090E),
+                color: const Color(0xFF14171A),
                 fontSize: 28,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 32),
-            const CircularProgressIndicator(color: Color(0xFF08090E)),
+            const CircularProgressIndicator(color: Color(0xFF14171A)),
           ],
         ),
       ),
