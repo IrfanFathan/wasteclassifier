@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'screens/upload_screen.dart';
 import 'screens/bin_setup_screen.dart';
 import 'screens/detection_screen.dart';
+import 'screens/connection_screen.dart';
 import 'utils/config_manager.dart';
 import 'utils/model_manager.dart';
 
@@ -19,90 +20,18 @@ class WasteClassifierApp extends StatelessWidget {
     return MaterialApp(
       title: 'Waste Classifier',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF9FAFB),
-        colorScheme: const ColorScheme(
-          brightness: Brightness.light,
-          primary: Color(0xFF14171A),
-          onPrimary: Colors.white,
-          secondary: Color(0xFF6B7280),
-          onSecondary: Colors.white,
-          error: Color(0xFFC62828),
-          onError: Colors.white,
-          surface: Colors.white,
-          onSurface: Color(0xFF14171A),
-        ),
-        appBarTheme: const AppBarTheme(
-          elevation: 0,
-          backgroundColor: Color(0xFFF9FAFB),
-          foregroundColor: Color(0xFF14171A),
-          centerTitle: false,
-        ),
-        cardTheme: CardThemeData(
-          elevation: 1,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-          color: Colors.white,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF14171A),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(
-              vertical: 12,
-              horizontal: 20,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-            elevation: 0,
-          ),
-        ),
-        dividerTheme: const DividerThemeData(
-          color: Color(0xFFD1D5DB),
-          thickness: 0.5,
-        ),
-        textTheme: GoogleFonts.interTextTheme(
-          const TextTheme(
-            displayLarge: TextStyle(
-              fontSize: 34,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF14171A),
-            ),
-            headlineMedium: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF14171A),
-            ),
-            titleMedium: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF14171A),
-            ),
-            bodyLarge: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w400,
-              color: Color(0xFF14171A),
-              height: 1.5,
-            ),
-            bodyMedium: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-              color: Color(0xFF6B7280),
-              height: 1.5,
-            ),
-            labelSmall: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w400,
-              color: Color(0xFFD1D5DB),
-            ),
-          ),
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.black,
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF00E676),
+          secondary: Color(0xFF00B0FF),
         ),
       ),
-      home: const _AppStartup(),
+      home: const ConnectionScreen(),
+      routes: {
+        '/upload': (context) => const UploadScreen(),
+        '/detect': (context) => const DetectionScreen(),
+      },
     );
   }
 }

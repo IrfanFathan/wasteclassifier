@@ -7,10 +7,13 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../models/app_config.dart';
 import '../models/bin_category.dart';
+import '../models/calibration_config.dart';
 import '../utils/config_manager.dart';
 import '../utils/image_processor.dart';
 import '../utils/model_manager.dart';
+import '../utils/waste_detector.dart';
 import '../utils/waste_locator.dart';
+import '../services/esp32_service.dart';
 import 'bin_setup_screen.dart';
 import 'upload_screen.dart';
 
@@ -83,6 +86,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── Config ─────────────────────────────────────────────────────────────
   AppConfig? _config;
   List<String> _labels = [];
+  CalibrationConfig _calibration = CalibrationConfig();
 
   // ─── Detection Result ───────────────────────────────────────────────────
   DetectionState _state = DetectionState.waiting;
@@ -97,6 +101,9 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// Robot navigation location from [WasteLocator].
   WasteLocation _wasteLocation = WasteLocation.unknown;
 
+  // ─── ESP32 ──────────────────────────────────────────────────────────────
+  DateTime? _lastEspTransmission;
+
   // ─── Animation ───────────────────────────────────────────────────────────
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
@@ -105,6 +112,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   static const Color _accentGreen = Color(0xFF00E676);
   static const Color _accentAmber = Color(0xFFFFD740);
   static const Color _accentRed   = Color(0xFFFF5252);
+  static const Color _accentCyan  = Color(0xFF00B0FF);
   static const Color _panelBg     = Color(0xE6121212); // 90% opaque dark
 
   @override
@@ -140,10 +148,12 @@ class _DetectionScreenState extends State<DetectionScreen>
   Future<void> _loadConfig() async {
     final config = await ConfigManager.loadConfig();
     final labels = await ConfigManager.loadLabels();
+    final calibration = await ConfigManager.loadCalibration();
     if (mounted) {
       setState(() {
         _config = config;
         _labels = labels;
+        if (calibration != null) _calibration = calibration;
       });
     }
   }
@@ -223,24 +233,91 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   void _runInference(CameraImage image) {
     try {
-      final inputFlat  = ImageProcessor.processImage(image);
-      final inputBytes = inputFlat.buffer.asUint8List();
+      final config = _config!;
+      final numClasses = _labels.length;
 
-      final numClasses   = _labels.length;
-      final outputBuffer = List<double>.filled(numClasses, 0.0);
-      final output       = [outputBuffer];
+      // ── Step 1: Convert camera frame to RGB (once) ─────────────────────
+      final rgbImage = ImageProcessor.convertToRgb(image);
 
-      _interpreter!.run(inputBytes, output);
+      // ── Step 2: Detect objects using CV-based analysis ─────────────────
+      final regions = WasteDetector.detect(rgbImage);
 
-      final probs  = output[0];
-      double maxP  = 0.0;
-      int    maxI  = 0;
-      for (int i = 0; i < probs.length; i++) {
-        if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
+      if (regions.isEmpty) {
+        // No salient objects found → classify full frame as fallback.
+        final inputFlat  = ImageProcessor.processImage(image);
+        final inputBytes = inputFlat.buffer.asUint8List();
+        final outputBuffer = List<double>.filled(numClasses, 0.0);
+        final output = [outputBuffer];
+        _interpreter!.run(inputBytes, output);
+
+        final probs = output[0];
+        double maxP = 0.0;
+        int    maxI = 0;
+        for (int i = 0; i < probs.length; i++) {
+          if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
+        }
+        final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
+
+        // Use centre of frame as fallback position.
+        _processResult(
+          label, maxP,
+          rgbImage.width ~/ 2, rgbImage.height ~/ 2,
+          rgbImage.width, rgbImage.height,
+        );
+        return;
       }
 
-      final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
-      _processResult(label, maxP);
+      // ── Step 3: Classify each detected region ─────────────────────────
+      double bestConf   = 0.0;
+      String bestLabel   = '';
+      int    bestCx      = 0;
+      int    bestCy      = 0;
+      bool   foundWaste  = false;
+
+      for (final region in regions) {
+        // Crop the detected region and run TFLite on it.
+        final inputFlat = ImageProcessor.processRegion(
+          rgbImage, region.x, region.y, region.w, region.h,
+        );
+        final inputBytes = inputFlat.buffer.asUint8List();
+        final outputBuffer = List<double>.filled(numClasses, 0.0);
+        final output = [outputBuffer];
+        _interpreter!.run(inputBytes, output);
+
+        final probs = output[0];
+        double maxP = 0.0;
+        int    maxI = 0;
+        for (int i = 0; i < probs.length; i++) {
+          if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
+        }
+
+        final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
+
+        // Skip "nothing" labels.
+        final isNothing = config.nothingLabels
+            .any((n) => n.toLowerCase() == label.toLowerCase());
+        if (isNothing) continue;
+
+        if (maxP < config.confidenceThreshold) continue;
+
+        if (maxP > bestConf) {
+          bestConf  = maxP;
+          bestLabel = label;
+          bestCx    = region.cx;
+          bestCy    = region.cy;
+          foundWaste = true;
+        }
+      }
+
+      if (foundWaste) {
+        _processResult(
+          bestLabel, bestConf,
+          bestCx, bestCy,
+          rgbImage.width, rgbImage.height,
+        );
+      } else {
+        _processResult('', 0.0, 0, 0, rgbImage.width, rgbImage.height);
+      }
     } catch (e) {
       debugPrint('Inference error: $e');
     } finally {
@@ -248,8 +325,14 @@ class _DetectionScreenState extends State<DetectionScreen>
     }
   }
 
-  /// Updates detection state + computes grid coordinate + robot navigation.
-  void _processResult(String label, double confidence) {
+  /// Updates detection state from pixel coordinates.
+  ///
+  /// [cx], [cy]  — pixel centre of the detected object.
+  /// [fw], [fh]  — frame dimensions.
+  void _processResult(
+    String label, double confidence,
+    int cx, int cy, int fw, int fh,
+  ) {
     if (!mounted) return;
     final config = _config!;
 
@@ -288,18 +371,19 @@ class _DetectionScreenState extends State<DetectionScreen>
       }
     }
 
-    // ── Grid coordinate ────────────────────────────────────────────────────
-    // Full-frame classifier: use centre of frame (0.5, 0.5) as the nominal
-    // position. When upgraded to a detection model, replace with real bbox_cx
-    // / frame_width and bbox_cy / frame_height.
-    const double normX = 0.5;
-    const double normY = 0.5;
+    // ── Grid coordinate from pixel position ──────────────────────────────
+    final double normX = fw > 0 ? cx / fw : 0.5;
+    final double normY = fh > 0 ? cy / fh : 0.5;
     final cell = toGridCoord(normX, normY);
 
-    // ── Robot navigation (WasteLocator) ────────────────────────────────────
+    // ── Robot navigation (WasteLocator) ──────────────────────────────────
     final location = WasteLocator.compute(
+      pixelX: cx,
+      pixelY: cy,
+      frameWidth: fw,
+      frameHeight: fh,
       confidence: confidence,
-      frameWidthFraction: normX,
+      calibration: _calibration,
       minConfidence: config.confidenceThreshold,
     );
 
@@ -312,11 +396,38 @@ class _DetectionScreenState extends State<DetectionScreen>
       if (matchedBin != null) {
         _state       = DetectionState.detected;
         _detectedBin = matchedBin;
+        _transmitToEsp32(label, matchedBin, confidence, location);
       } else {
         _state       = DetectionState.unmapped;
         _detectedBin = null;
       }
     });
+  }
+
+  void _transmitToEsp32(String label, BinCategory bin, double confidence, WasteLocation location) {
+    if (!Esp32Service().isConnected) return;
+    
+    // Throttle transmissions to once per second so we don't spam the ESP32
+    final now = DateTime.now();
+    if (_lastEspTransmission != null &&
+        now.difference(_lastEspTransmission!).inMilliseconds < 1000) {
+      return;
+    }
+    _lastEspTransmission = now;
+
+    Esp32Service().sendWasteData(
+      label: label,
+      binId: bin.id,
+      binName: bin.name,
+      confidence: confidence,
+      direction: location.direction.name,
+      distanceCm: location.estimatedDistanceCm,
+      coordX: location.normX,
+      coordY: location.normY,
+      gridCell: _activeCell?.label ?? '--',
+      pixelX: location.pixelX,
+      pixelY: location.pixelY,
+    );
   }
 
   // ─── Settings ────────────────────────────────────────────────────────────
@@ -529,6 +640,19 @@ class _DetectionScreenState extends State<DetectionScreen>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // ESP32 Connection indicator
+          if (Esp32Service().isConnected) ...[
+            Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: _accentCyan,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          
           // Dot indicator
           AnimatedBuilder(
             animation: _pulseAnim,
@@ -858,6 +982,8 @@ class _DetectionScreenState extends State<DetectionScreen>
         ? _accentRed
         : cmd.contains('TURN') ? _accentAmber : _accentGreen;
 
+    final loc = _wasteLocation;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -877,6 +1003,27 @@ class _DetectionScreenState extends State<DetectionScreen>
             style: GoogleFonts.robotoMono(
               color: Colors.white38,
               fontSize: 11,
+            ),
+          ),
+        ],
+        // ── Pixel coordinates ────────────────────────────────────────────
+        if (_state != DetectionState.waiting) ...[
+          const SizedBox(height: 4),
+          Text(
+            'px(${loc.pixelX}, ${loc.pixelY})',
+            style: GoogleFonts.robotoMono(
+              color: _accentCyan.withValues(alpha: 0.8),
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'X: ${loc.normX.toStringAsFixed(2)}  Y: ${loc.normY.toStringAsFixed(2)}',
+            style: GoogleFonts.robotoMono(
+              color: _accentCyan.withValues(alpha: 0.6),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
