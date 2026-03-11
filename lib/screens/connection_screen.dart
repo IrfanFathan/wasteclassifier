@@ -21,7 +21,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   Future<void> _checkConnection() async {
     setState(() {
       _isChecking = true;
-      _statusMsg = 'Pinging 192.168.4.1...';
+      _statusMsg = 'Pinging 192.168.1.200...';
     });
     
     final success = await Esp32Service().checkConnection();
@@ -31,8 +31,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       _isChecking = false;
       _isConnected = success;
       _statusMsg = success 
-          ? 'Connected to ESP32! ✅' 
-          : 'Could not reach ESP32. Ensure you are on its Wi-Fi network.';
+          ? 'ESP32 Connected' 
+          : 'ESP32 Not Connected';
     });
 
     if (success) {

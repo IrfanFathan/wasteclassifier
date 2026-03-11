@@ -28,9 +28,14 @@ class RobotController {
   /// }
   /// ```
   static Map<String, dynamic> createRobotCommand(GridPosition position) {
-    return position.toJson();
+    return {
+      "object_detected": true,
+      "coordinates": {
+        "x": position.centerX.round(),
+        "y": position.centerY.round()
+      }
+    };
   }
-
   // ── Transmission ───────────────────────────────────────────────────────
 
   /// Sends a grid command to the ESP32 via HTTP POST.

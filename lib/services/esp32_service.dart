@@ -8,8 +8,8 @@ class Esp32Service {
   static final Esp32Service _instance = Esp32Service._internal();
   factory Esp32Service() => _instance;
 
-  // The default IP address for an ESP32 hosting a softAP is 192.168.4.1
-  static const String esp32Ip = '192.168.4.1';
+  // The predefined static IP for ESP32 connection
+  static const String esp32Ip = '192.168.1.200';
   static const String baseUrl = 'http://$esp32Ip';
 
   bool _isConnected = false;
@@ -19,7 +19,7 @@ class Esp32Service {
   Future<bool> checkConnection() async {
     try {
       final response = await http
-          .get(Uri.parse('$baseUrl/ping'))
+          .get(Uri.parse('$baseUrl/status'))
           .timeout(const Duration(seconds: 3));
           
       if (response.statusCode == 200) {
@@ -91,9 +91,29 @@ class Esp32Service {
     try {
       final response = await http
           .post(
-            Uri.parse('$baseUrl/command'),
+            Uri.parse('$baseUrl/coordinates'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(command),
+          )
+          .timeout(const Duration(seconds: 2));
+
+      return response.statusCode == 200;
+    } catch (e) {
+      _isConnected = false;
+      return false;
+    }
+  }
+
+  /// Sends a trigger command to the ESP32 to initiate control signals.
+  Future<bool> sendTrigger() async {
+    if (!_isConnected) return false;
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/trigger'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'trigger': 1}),
           )
           .timeout(const Duration(seconds: 2));
 

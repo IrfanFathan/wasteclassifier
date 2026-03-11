@@ -607,6 +607,10 @@ class _DetectionScreenState extends State<DetectionScreen>
   Widget _buildActionButtons() {
     return Row(
       children: [
+        if (Esp32Service().isConnected) ...[
+          _iconBtn(Icons.flash_on_rounded, () => Esp32Service().sendTrigger(), label: 'Trigger'),
+          const SizedBox(width: 8),
+        ],
         _iconBtn(Icons.tune_rounded, _openSettings, label: 'Bin Setup'),
         const SizedBox(width: 8),
         _iconBtn(Icons.swap_horiz_rounded, _confirmChangeModel),
@@ -799,7 +803,7 @@ class _DetectionScreenState extends State<DetectionScreen>
                 child: Column(
                   children: [
                     Text(
-                      gridPos.label,
+                      '${gridPos.centerX.round()}, ${gridPos.centerY.round()}',
                       style: GoogleFonts.robotoMono(
                         color: accent,
                         fontSize: 22,
@@ -807,7 +811,7 @@ class _DetectionScreenState extends State<DetectionScreen>
                       ),
                     ),
                     Text(
-                      'GRID',
+                      'COORD (X, Y)',
                       style: GoogleFonts.inter(
                         color: accent.withValues(alpha: 0.6),
                         fontSize: 9,
