@@ -80,4 +80,27 @@ class Esp32Service {
       return false;
     }
   }
+
+  /// Sends a grid-based robotic arm command to the ESP32.
+  ///
+  /// The [command] map should contain `grid_x`, `grid_y`, `pixel_x`,
+  /// `pixel_y`, and `action` keys (as produced by [RobotController]).
+  Future<bool> sendRobotCommand(Map<String, dynamic> command) async {
+    if (!_isConnected) return false;
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/command'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(command),
+          )
+          .timeout(const Duration(seconds: 2));
+
+      return response.statusCode == 200;
+    } catch (e) {
+      _isConnected = false;
+      return false;
+    }
+  }
 }

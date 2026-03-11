@@ -5,13 +5,15 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
+import '../core/grid_mapper.dart';
+import '../communication/robot_controller.dart';
 import '../models/app_config.dart';
 import '../models/bin_category.dart';
 import '../models/calibration_config.dart';
+import '../ui/grid_overlay_painter.dart';
 import '../utils/config_manager.dart';
 import '../utils/image_processor.dart';
 import '../utils/model_manager.dart';
-import '../utils/waste_detector.dart';
 import '../utils/waste_locator.dart';
 import '../services/esp32_service.dart';
 import 'bin_setup_screen.dart';
@@ -23,36 +25,8 @@ import 'upload_screen.dart';
 enum DetectionState { waiting, detected, unmapped }
 
 // ─── Grid Coordinate ──────────────────────────────────────────────────────
-
-/// A cell in the 4×4 camera grid, addressed by column (A–D) and row (1–4).
-///
-/// The grid maps the camera frame divided into 16 equal zones.
-/// Column A is the leftmost; column D is the rightmost.
-/// Row 1 is the top; row 4 is the bottom.
-class GridCoord {
-  /// Column letter: A, B, C, or D (left → right).
-  final String col;
-
-  /// Row number: 1–4 (top → bottom).
-  final int row;
-
-  const GridCoord(this.col, this.row);
-
-  /// Human-readable coordinate string, e.g. "B3".
-  String get label => '$col$row';
-
-  @override
-  String toString() => label;
-}
-
-/// Converts a normalised [x] (0–1, left→right) and [y] (0–1, top→bottom) into
-/// a [GridCoord] within the 4×4 grid.
-GridCoord toGridCoord(double x, double y) {
-  const cols = ['A', 'B', 'C', 'D'];
-  final colIdx = (x * 4).floor().clamp(0, 3);
-  final rowIdx = (y * 4).floor().clamp(0, 3);
-  return GridCoord(cols[colIdx], rowIdx + 1);
-}
+// Now uses GridPosition from lib/core/grid_mapper.dart
+// (8×8 center-origin Cartesian system)
 
 // ─── DetectionScreen ──────────────────────────────────────────────────────
 
@@ -60,10 +34,11 @@ GridCoord toGridCoord(double x, double y) {
 ///
 /// Features:
 ///   - Full-screen camera preview (correct 4:3 aspect ratio).
-///   - 4×4 grid overlay with column labels A–D and row labels 1–4.
+///   - 8×8 center-origin grid overlay with Cartesian labels.
 ///   - Active cell highlight showing where waste is located in frame.
-///   - Bottom-anchored result panel showing waste name + grid coordinate.
+///   - Bottom-anchored result panel showing (gridX, gridY) coordinates.
 ///   - Robot navigation command from [WasteLocator].
+///   - Grid-based pick commands sent to ESP32 robotic arm controller.
 class DetectionScreen extends StatefulWidget {
   const DetectionScreen({super.key});
 
@@ -95,8 +70,8 @@ class _DetectionScreenState extends State<DetectionScreen>
   BinCategory? _detectedBin;
 
   // ─── Spatial / Grid ─────────────────────────────────────────────────────
-  /// Active grid coordinate where waste was detected (null when waiting).
-  GridCoord? _activeCell;
+  /// Active grid position where waste was detected (null when waiting).
+  GridPosition? _activePosition;
 
   /// Robot navigation location from [WasteLocator].
   WasteLocation _wasteLocation = WasteLocation.unknown;
@@ -233,91 +208,31 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   void _runInference(CameraImage image) {
     try {
-      final config = _config!;
       final numClasses = _labels.length;
 
-      // ── Step 1: Convert camera frame to RGB (once) ─────────────────────
-      final rgbImage = ImageProcessor.convertToRgb(image);
+      // ── Step 1: Preprocess full frame ──────────────────────────────────
+      final inputFlat  = ImageProcessor.processImage(image);
+      final inputBytes = inputFlat.buffer.asUint8List();
+      
+      // ── Step 2: Run TFLite Inference ───────────────────────────────────
+      final outputBuffer = List<double>.filled(numClasses, 0.0);
+      final output = [outputBuffer];
+      _interpreter!.run(inputBytes, output);
 
-      // ── Step 2: Detect objects using CV-based analysis ─────────────────
-      final regions = WasteDetector.detect(rgbImage);
-
-      if (regions.isEmpty) {
-        // No salient objects found → classify full frame as fallback.
-        final inputFlat  = ImageProcessor.processImage(image);
-        final inputBytes = inputFlat.buffer.asUint8List();
-        final outputBuffer = List<double>.filled(numClasses, 0.0);
-        final output = [outputBuffer];
-        _interpreter!.run(inputBytes, output);
-
-        final probs = output[0];
-        double maxP = 0.0;
-        int    maxI = 0;
-        for (int i = 0; i < probs.length; i++) {
-          if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
-        }
-        final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
-
-        // Use centre of frame as fallback position.
-        _processResult(
-          label, maxP,
-          rgbImage.width ~/ 2, rgbImage.height ~/ 2,
-          rgbImage.width, rgbImage.height,
-        );
-        return;
+      final probs = output[0];
+      double maxP = 0.0;
+      int    maxI = 0;
+      for (int i = 0; i < probs.length; i++) {
+        if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
       }
+      final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
 
-      // ── Step 3: Classify each detected region ─────────────────────────
-      double bestConf   = 0.0;
-      String bestLabel   = '';
-      int    bestCx      = 0;
-      int    bestCy      = 0;
-      bool   foundWaste  = false;
-
-      for (final region in regions) {
-        // Crop the detected region and run TFLite on it.
-        final inputFlat = ImageProcessor.processRegion(
-          rgbImage, region.x, region.y, region.w, region.h,
-        );
-        final inputBytes = inputFlat.buffer.asUint8List();
-        final outputBuffer = List<double>.filled(numClasses, 0.0);
-        final output = [outputBuffer];
-        _interpreter!.run(inputBytes, output);
-
-        final probs = output[0];
-        double maxP = 0.0;
-        int    maxI = 0;
-        for (int i = 0; i < probs.length; i++) {
-          if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
-        }
-
-        final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
-
-        // Skip "nothing" labels.
-        final isNothing = config.nothingLabels
-            .any((n) => n.toLowerCase() == label.toLowerCase());
-        if (isNothing) continue;
-
-        if (maxP < config.confidenceThreshold) continue;
-
-        if (maxP > bestConf) {
-          bestConf  = maxP;
-          bestLabel = label;
-          bestCx    = region.cx;
-          bestCy    = region.cy;
-          foundWaste = true;
-        }
-      }
-
-      if (foundWaste) {
-        _processResult(
-          bestLabel, bestConf,
-          bestCx, bestCy,
-          rgbImage.width, rgbImage.height,
-        );
-      } else {
-        _processResult('', 0.0, 0, 0, rgbImage.width, rgbImage.height);
-      }
+      // ── Step 3: Process Results ────────────────────────────────────────
+      _processResult(
+        label, maxP,
+        image.width ~/ 2, image.height ~/ 2, // Default to center for full frame
+        image.width, image.height,
+      );
     } catch (e) {
       debugPrint('Inference error: $e');
     } finally {
@@ -340,8 +255,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     if (confidence < config.confidenceThreshold) {
       if (_state != DetectionState.waiting) {
         setState(() {
-          _state        = DetectionState.waiting;
-          _activeCell   = null;
+          _state           = DetectionState.waiting;
+          _activePosition  = null;
           _wasteLocation = WasteLocation.unknown;
         });
       }
@@ -354,8 +269,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     if (isNothing) {
       if (_state != DetectionState.waiting) {
         setState(() {
-          _state        = DetectionState.waiting;
-          _activeCell   = null;
+          _state           = DetectionState.waiting;
+          _activePosition  = null;
           _wasteLocation = WasteLocation.unknown;
         });
       }
@@ -371,10 +286,11 @@ class _DetectionScreenState extends State<DetectionScreen>
       }
     }
 
-    // ── Grid coordinate from pixel position ──────────────────────────────
-    final double normX = fw > 0 ? cx / fw : 0.5;
-    final double normY = fh > 0 ? cy / fh : 0.5;
-    final cell = toGridCoord(normX, normY);
+    // ── 8×8 Center-origin grid position ───────────────────────────────────
+    final gridPos = GridMapper.fromPixel(
+      pixelX: cx.toDouble(),
+      pixelY: cy.toDouble(),
+    );
 
     // ── Robot navigation (WasteLocator) ──────────────────────────────────
     final location = WasteLocator.compute(
@@ -388,15 +304,15 @@ class _DetectionScreenState extends State<DetectionScreen>
     );
 
     setState(() {
-      _detectedLabel  = label;
-      _confidence     = confidence;
-      _activeCell     = cell;
-      _wasteLocation  = location;
+      _detectedLabel   = label;
+      _confidence      = confidence;
+      _activePosition  = gridPos;
+      _wasteLocation   = location;
 
       if (matchedBin != null) {
         _state       = DetectionState.detected;
         _detectedBin = matchedBin;
-        _transmitToEsp32(label, matchedBin, confidence, location);
+        _transmitToEsp32(label, matchedBin, confidence, location, gridPos);
       } else {
         _state       = DetectionState.unmapped;
         _detectedBin = null;
@@ -404,7 +320,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     });
   }
 
-  void _transmitToEsp32(String label, BinCategory bin, double confidence, WasteLocation location) {
+  void _transmitToEsp32(String label, BinCategory bin, double confidence, WasteLocation location, GridPosition gridPos) {
     if (!Esp32Service().isConnected) return;
     
     // Throttle transmissions to once per second so we don't spam the ESP32
@@ -415,6 +331,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     }
     _lastEspTransmission = now;
 
+    // Send waste classification data.
     Esp32Service().sendWasteData(
       label: label,
       binId: bin.id,
@@ -422,12 +339,16 @@ class _DetectionScreenState extends State<DetectionScreen>
       confidence: confidence,
       direction: location.direction.name,
       distanceCm: location.estimatedDistanceCm,
-      coordX: location.normX,
-      coordY: location.normY,
-      gridCell: _activeCell?.label ?? '--',
-      pixelX: location.pixelX,
-      pixelY: location.pixelY,
+      coordX: gridPos.centerX,
+      coordY: gridPos.centerY,
+      gridCell: gridPos.label,
+      pixelX: gridPos.pixelX,
+      pixelY: gridPos.pixelY,
     );
+
+    // Also send the structured grid command for robotic arm.
+    final command = RobotController.createRobotCommand(gridPos);
+    Esp32Service().sendRobotCommand(command);
   }
 
   // ─── Settings ────────────────────────────────────────────────────────────
@@ -543,10 +464,10 @@ class _DetectionScreenState extends State<DetectionScreen>
           ),
         ),
 
-        // ── 2. 4×4 Grid overlay ─────────────────────────────────────────
+        // ── 2. 8×8 Center-origin Grid overlay ────────────────────────────
         Positioned.fill(
-          child: _Grid4x4Overlay(
-            activeCell: _activeCell,
+          child: Grid8x8Overlay(
+            activePosition: _activePosition,
             accentColor: accent,
             pulseAnimation: _pulseAnim,
           ),
@@ -774,7 +695,7 @@ class _DetectionScreenState extends State<DetectionScreen>
             const Icon(Icons.grid_4x4, color: Colors.white30, size: 18),
             const SizedBox(width: 8),
             Text(
-              'Scanning 4×4 grid…',
+              'Scanning 8×8 grid…',
               style: GoogleFonts.inter(color: Colors.white38, fontSize: 13),
             ),
             const Spacer(),
@@ -809,7 +730,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   /// Panel content when waste has been detected (mapped or unmapped).
   Widget _buildDetectionContent(Color accent) {
-    final cell = _activeCell;
+    final gridPos = _activePosition;
     final cmd  = _wasteLocation.robotCommand;
     final dist = _wasteLocation.estimatedDistanceCm;
 
@@ -863,8 +784,8 @@ class _DetectionScreenState extends State<DetectionScreen>
               ),
             ),
 
-            // Grid coordinate badge
-            if (cell != null)
+            // Grid coordinate badge (Cartesian)
+            if (gridPos != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
@@ -878,10 +799,10 @@ class _DetectionScreenState extends State<DetectionScreen>
                 child: Column(
                   children: [
                     Text(
-                      cell.label,
+                      gridPos.label,
                       style: GoogleFonts.robotoMono(
                         color: accent,
-                        fontSize: 24,
+                        fontSize: 22,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -982,8 +903,6 @@ class _DetectionScreenState extends State<DetectionScreen>
         ? _accentRed
         : cmd.contains('TURN') ? _accentAmber : _accentGreen;
 
-    final loc = _wasteLocation;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -1006,11 +925,11 @@ class _DetectionScreenState extends State<DetectionScreen>
             ),
           ),
         ],
-        // ── Pixel coordinates ────────────────────────────────────────────
-        if (_state != DetectionState.waiting) ...[
+        // ── Grid & pixel coordinates ─────────────────────────────────────
+        if (_state != DetectionState.waiting && _activePosition != null) ...[
           const SizedBox(height: 4),
           Text(
-            'px(${loc.pixelX}, ${loc.pixelY})',
+            'px(${_activePosition!.pixelX}, ${_activePosition!.pixelY})',
             style: GoogleFonts.robotoMono(
               color: _accentCyan.withValues(alpha: 0.8),
               fontSize: 10,
@@ -1019,7 +938,7 @@ class _DetectionScreenState extends State<DetectionScreen>
           ),
           const SizedBox(height: 2),
           Text(
-            'X: ${loc.normX.toStringAsFixed(2)}  Y: ${loc.normY.toStringAsFixed(2)}',
+            'cX: ${_activePosition!.centerX.toStringAsFixed(0)}  cY: ${_activePosition!.centerY.toStringAsFixed(0)}',
             style: GoogleFonts.robotoMono(
               color: _accentCyan.withValues(alpha: 0.6),
               fontSize: 10,
@@ -1032,222 +951,5 @@ class _DetectionScreenState extends State<DetectionScreen>
   }
 }
 
-// ─── 4×4 Grid Overlay ────────────────────────────────────────────────────
-
-/// Draws a 4×4 grid over the camera preview with column labels (A–D) along
-/// the top, row labels (1–4) along the left side, and optionally highlights
-/// one active cell with a pulsing tinted overlay.
-class _Grid4x4Overlay extends StatelessWidget {
-  const _Grid4x4Overlay({
-    required this.activeCell,
-    required this.accentColor,
-    required this.pulseAnimation,
-  });
-
-  /// The cell to highlight; null when nothing is detected.
-  final GridCoord? activeCell;
-
-  /// Accent colour used for the active cell and label highlights.
-  final Color accentColor;
-
-  /// Drives the pulsing alpha of the active cell highlight.
-  final Animation<double> pulseAnimation;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: pulseAnimation,
-      builder: (context, _) {
-        return CustomPaint(
-          painter: _Grid4x4Painter(
-            activeCell: activeCell,
-            accentColor: accentColor,
-            pulseValue: pulseAnimation.value,
-          ),
-        );
-      },
-    );
-  }
-}
-
-// ─── Grid Painter ─────────────────────────────────────────────────────────
-
-class _Grid4x4Painter extends CustomPainter {
-  final GridCoord? activeCell;
-  final Color accentColor;
-  final double pulseValue;
-
-  static const List<String> _cols = ['A', 'B', 'C', 'D'];
-  static const List<String> _rows = ['1', '2', '3', '4'];
-
-  const _Grid4x4Painter({
-    required this.activeCell,
-    required this.accentColor,
-    required this.pulseValue,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final double cellW = size.width / 4;
-    final double cellH = size.height / 4;
-
-    final gridPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.12)
-      ..strokeWidth = 0.8
-      ..style = PaintingStyle.stroke;
-
-    // ── Draw active cell highlight ────────────────────────────────────────
-    if (activeCell != null) {
-      final col = _cols.indexOf(activeCell!.col);
-      final row = activeCell!.row - 1;
-
-      if (col >= 0 && col < 4 && row >= 0 && row < 4) {
-        final cellRect = Rect.fromLTWH(
-          col * cellW,
-          row * cellH,
-          cellW,
-          cellH,
-        );
-
-        // Filled highlight (pulsing alpha).
-        canvas.drawRect(
-          cellRect,
-          Paint()
-            ..color = accentColor.withValues(alpha: 0.18 * pulseValue)
-            ..style = PaintingStyle.fill,
-        );
-
-        // Border of the active cell.
-        canvas.drawRect(
-          cellRect,
-          Paint()
-            ..color = accentColor.withValues(alpha: 0.7)
-            ..strokeWidth = 1.8
-            ..style = PaintingStyle.stroke,
-        );
-
-        // Corner brackets inside the active cell.
-        _drawCornerBrackets(canvas, cellRect, accentColor, 10.0, 2.0);
-      }
-    }
-
-    // ── Draw grid lines ───────────────────────────────────────────────────
-    // Vertical lines (skip 0 and 4 — those are the edges).
-    for (int c = 1; c < 4; c++) {
-      canvas.drawLine(
-        Offset(c * cellW, 0),
-        Offset(c * cellW, size.height),
-        gridPaint,
-      );
-    }
-    // Horizontal lines.
-    for (int r = 1; r < 4; r++) {
-      canvas.drawLine(
-        Offset(0, r * cellH),
-        Offset(size.width, r * cellH),
-        gridPaint,
-      );
-    }
-
-    // ── Draw column labels (A B C D) at top ───────────────────────────────
-    for (int c = 0; c < 4; c++) {
-      final isActiveCol = activeCell != null && _cols[c] == activeCell!.col;
-      _drawLabel(
-        canvas,
-        text: _cols[c],
-        x: c * cellW + cellW / 2,
-        y: 6,
-        color: isActiveCol
-            ? accentColor.withValues(alpha: 0.9)
-            : Colors.white.withValues(alpha: 0.35),
-        fontSize: 10,
-        bold: isActiveCol,
-      );
-    }
-
-    // ── Draw row labels (1 2 3 4) on left ────────────────────────────────
-    for (int r = 0; r < 4; r++) {
-      final isActiveRow = activeCell != null && (r + 1) == activeCell!.row;
-      _drawLabel(
-        canvas,
-        text: _rows[r],
-        x: 8,
-        y: r * cellH + cellH / 2,
-        color: isActiveRow
-            ? accentColor.withValues(alpha: 0.9)
-            : Colors.white.withValues(alpha: 0.35),
-        fontSize: 10,
-        bold: isActiveRow,
-      );
-    }
-  }
-
-  /// Draws a text label centred at (x, y) on the canvas.
-  void _drawLabel(
-    Canvas canvas, {
-    required String text,
-    required double x,
-    required double y,
-    required Color color,
-    double fontSize = 10,
-    bool bold = false,
-  }) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          color: color,
-          fontSize: fontSize,
-          fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-          fontFamily: 'RobotoMono',
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    painter.paint(
-      canvas,
-      Offset(x - painter.width / 2, y - painter.height / 2),
-    );
-  }
-
-  /// Draws small L-shaped corner brackets inside [rect].
-  void _drawCornerBrackets(
-    Canvas canvas,
-    Rect rect,
-    Color color,
-    double length,
-    double strokeWidth,
-  ) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    final l  = length;
-    final tl = rect.topLeft;
-    final tr = rect.topRight;
-    final bl = rect.bottomLeft;
-    final br = rect.bottomRight;
-
-    // Top-left
-    canvas.drawLine(tl, tl + Offset(l, 0), paint);
-    canvas.drawLine(tl, tl + Offset(0, l), paint);
-    // Top-right
-    canvas.drawLine(tr, tr + Offset(-l, 0), paint);
-    canvas.drawLine(tr, tr + Offset(0, l), paint);
-    // Bottom-left
-    canvas.drawLine(bl, bl + Offset(l, 0), paint);
-    canvas.drawLine(bl, bl + Offset(0, -l), paint);
-    // Bottom-right
-    canvas.drawLine(br, br + Offset(-l, 0), paint);
-    canvas.drawLine(br, br + Offset(0, -l), paint);
-  }
-
-  @override
-  bool shouldRepaint(_Grid4x4Painter old) =>
-      old.activeCell?.label != activeCell?.label ||
-      old.accentColor != accentColor ||
-      old.pulseValue != pulseValue;
-}
+// Grid overlay is now provided by Grid8x8Overlay from
+// lib/ui/grid_overlay_painter.dart
