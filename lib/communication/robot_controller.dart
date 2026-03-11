@@ -51,7 +51,7 @@ class RobotController {
     try {
       final response = await http
           .post(
-            Uri.parse('$url/command'),
+            Uri.parse('$url/connect'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(command),
           )

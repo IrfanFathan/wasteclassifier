@@ -19,7 +19,7 @@ class Esp32Service {
   Future<bool> checkConnection() async {
     try {
       final response = await http
-          .get(Uri.parse('$baseUrl/status'))
+          .get(Uri.parse('$baseUrl/connect'))
           .timeout(const Duration(seconds: 3));
           
       if (response.statusCode == 200) {
@@ -91,7 +91,7 @@ class Esp32Service {
     try {
       final response = await http
           .post(
-            Uri.parse('$baseUrl/coordinates'),
+            Uri.parse('$baseUrl/connect'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(command),
           )
