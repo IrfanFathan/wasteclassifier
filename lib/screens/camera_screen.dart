@@ -84,40 +84,84 @@ class _CameraScreenState extends State<CameraScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return Scaffold(
+        backgroundColor: AppTheme.background,
+        body: const Center(
+          child: CircularProgressIndicator(
+            color: Colors.white,
+            strokeWidth: 2,
+          ),
+        ),
+      );
+    }
+
+    final size = MediaQuery.of(context).size;
+    final isPortrait = size.height > size.width;
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
-        child: Column(
-          children: [
-            // Top Bar Zone (Fixed 60px height within widget)
-            TopBar(
-              onBinSetupPressed: () {
-                // If navigation is needed, do it here
-              },
-              onSwitchCameraPressed: _switchCamera,
-            ),
-            
-            // Camera + Grid Frame Zone (Expanded)
-            Expanded(
+        child: isPortrait ? _buildPortraitLayout() : _buildLandscapeLayout(),
+      ),
+    );
+  }
+
+  Widget _buildPortraitLayout() {
+    return Column(
+      children: [
+        TopBar(
+          onBinSetupPressed: () {},
+          onSwitchCameraPressed: _switchCamera,
+        ),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
               child: _error != null
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: Text(
-                          _error!,
-                          style: const TextStyle(color: Colors.redAccent),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
+                  ? Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                      textAlign: TextAlign.center,
                     )
                   : CameraPreviewFrame(cameraController: _cameraController),
             ),
-            
-            // Bottom Sheet Zone
-            const BottomInfoSheet(),
-          ],
+          ),
         ),
-      ),
+        const BottomInfoSheet(),
+      ],
+    );
+  }
+
+  Widget _buildLandscapeLayout() {
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: TopBar(
+            onBinSetupPressed: () {},
+            onSwitchCameraPressed: _switchCamera,
+          ),
+        ),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: _error != null
+                  ? Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                      textAlign: TextAlign.center,
+                    )
+                  : CameraPreviewFrame(cameraController: _cameraController),
+            ),
+          ),
+        ),
+        const SizedBox(
+          width: 300,
+          child: BottomInfoSheet(),
+        ),
+      ],
     );
   }
 }

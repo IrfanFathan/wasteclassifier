@@ -2,53 +2,58 @@ import 'package:flutter/material.dart';
 
 class GridPainter extends CustomPainter {
   final int xCells = 8;
-  final int yCells = 4;
+  final int yCells = 8;
+  final Color lineColor;
+  final double lineWidth;
+
+  GridPainter({
+    this.lineColor = const Color.fromRGBO(255, 255, 255, 0.4),
+    this.lineWidth = 1.0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
+    // 1. Define standard line paint
+    final linePaint = Paint()
+      ..color = lineColor
+      ..strokeWidth = lineWidth
+      ..style = PaintingStyle.stroke;
+
     final double cellWidth = size.width / xCells;
     final double cellHeight = size.height / yCells;
 
-    final Paint gridPaint = Paint()
-      ..color = const Color.fromRGBO(255, 255, 255, 0.15)
-      ..strokeWidth = 1.0
-      ..style = PaintingStyle.stroke;
+    // Draw internal vertical lines
+    for (int i = 1; i < xCells; i++) {
+      final double dx = i * cellWidth;
+      canvas.drawLine(Offset(dx, 0), Offset(dx, size.height), linePaint);
+    }
 
-    final Paint crosshairPaint = Paint()
-      ..color = const Color.fromRGBO(255, 255, 255, 0.5)
+    // Draw internal horizontal lines
+    for (int i = 1; i < yCells; i++) {
+      final double dy = i * cellHeight;
+      canvas.drawLine(Offset(0, dy), Offset(size.width, dy), linePaint);
+    }
+    
+    // 2. Draw outer boundary box (Matches exactly the perimeter of the screen)
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), linePaint);
+
+    // 3. Optional: Draw a precise center crosshair
+    final centerPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.9)
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
-
-    // Draw vertical lines
-    for (int i = 0; i <= xCells; i++) {
-      final double x = i * cellWidth;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    }
-
-    // Draw horizontal lines
-    for (int i = 0; i <= yCells; i++) {
-      final double y = i * cellHeight;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-
-    // Draw crosshair at exact center
-    final Offset center = Offset(size.width / 2, size.height / 2);
-    const double crosshairSize = 15.0; // 30px arms total (15px each side)
     
-    canvas.drawLine(
-      Offset(center.dx - crosshairSize, center.dy),
-      Offset(center.dx + crosshairSize, center.dy),
-      crosshairPaint,
-    );
-    canvas.drawLine(
-      Offset(center.dx, center.dy - crosshairSize),
-      Offset(center.dx, center.dy + crosshairSize),
-      crosshairPaint,
-    );
+    final centerX = size.width / 2;
+    final centerY = size.height / 2;
+    const crosshairSize = 12.0;
+    
+    canvas.drawLine(Offset(centerX - crosshairSize, centerY), Offset(centerX + crosshairSize, centerY), centerPaint);
+    canvas.drawLine(Offset(centerX, centerY - crosshairSize), Offset(centerX, centerY + crosshairSize), centerPaint);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false; // Grid is static based on size
+  bool shouldRepaint(covariant GridPainter oldDelegate) {
+    return oldDelegate.lineColor != lineColor ||
+           oldDelegate.lineWidth != lineWidth;
   }
 }
