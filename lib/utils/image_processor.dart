@@ -18,6 +18,90 @@ class ZoneResult {
   const ZoneResult({required this.tensor, required this.cx, required this.cy});
 }
 
+// ─── Isolate param record for Dart-fallback grid scan ─────────────────────
+
+typedef _GridScanMsg = ({
+  Uint8List yBytes,
+  Uint8List uBytes,
+  Uint8List vBytes,
+  int yRowStride,
+  int uvRowStride,
+  int uvPixelStride,
+  int width,
+  int height,
+  int cols,
+  int rows,
+  int inputSize,
+});
+
+/// Top-level function for [compute] — runs the full pure-Dart YUV→RGB
+/// conversion, zone tiling, and normalisation in a worker isolate so the
+/// platform UI thread is never blocked by the pixel loop.
+///
+/// Returns one `(tensor, cx, cy)` record per zone in row-major order.
+List<(Float32List, int, int)> _scanGridZonesInIsolate(_GridScanMsg msg) {
+  final rgb = img.Image(width: msg.width, height: msg.height);
+
+  for (int py = 0; py < msg.height; py++) {
+    for (int px = 0; px < msg.width; px++) {
+      final yIdx = py * msg.yRowStride + px;
+      final uvIdx = (py ~/ 2) * msg.uvRowStride + (px ~/ 2) * msg.uvPixelStride;
+
+      final yVal = msg.yBytes[yIdx] & 0xFF;
+      final uVal = msg.uBytes[uvIdx] & 0xFF;
+      final vVal = msg.vBytes[uvIdx] & 0xFF;
+
+      final r = (yVal + 1.402 * (vVal - 128)).round().clamp(0, 255);
+      final g = (yVal - 0.344136 * (uVal - 128) - 0.714136 * (vVal - 128))
+          .round()
+          .clamp(0, 255);
+      final b = (yVal + 1.772 * (uVal - 128)).round().clamp(0, 255);
+
+      rgb.setPixelRgb(px, py, r, g, b);
+    }
+  }
+
+  final zoneW = msg.width ~/ msg.cols;
+  final zoneH = msg.height ~/ msg.rows;
+  final results = <(Float32List, int, int)>[];
+
+  for (int row = 0; row < msg.rows; row++) {
+    for (int col = 0; col < msg.cols; col++) {
+      final x = col * zoneW;
+      final y = row * zoneH;
+      final w = (col == msg.cols - 1) ? msg.width - x : zoneW;
+      final h = (row == msg.rows - 1) ? msg.height - y : zoneH;
+      final cx = x + w ~/ 2;
+      final cy = y + h ~/ 2;
+
+      final cx2 = x.clamp(0, msg.width - 1);
+      final cy2 = y.clamp(0, msg.height - 1);
+      final cw = w.clamp(1, msg.width - cx2);
+      final ch = h.clamp(1, msg.height - cy2);
+
+      final cropped = img.copyCrop(rgb, x: cx2, y: cy2, width: cw, height: ch);
+      final resized = img.copyResize(
+        cropped,
+        width: msg.inputSize,
+        height: msg.inputSize,
+      );
+
+      final tensor = Float32List(msg.inputSize * msg.inputSize * 3);
+      int idx = 0;
+      for (int r = 0; r < msg.inputSize; r++) {
+        for (int c = 0; c < msg.inputSize; c++) {
+          final pixel = resized.getPixel(c, r);
+          tensor[idx++] = pixel.r / 255.0;
+          tensor[idx++] = pixel.g / 255.0;
+          tensor[idx++] = pixel.b / 255.0;
+        }
+      }
+      results.add((tensor, cx, cy));
+    }
+  }
+  return results;
+}
+
 // ─── ImageProcessor ───────────────────────────────────────────────────────
 
 class ImageProcessor {
@@ -192,27 +276,105 @@ class ImageProcessor {
         // Last column/row absorbs any rounding remainder.
         final w = (col == cols - 1) ? fw - x : zoneW;
         final h = (row == rows - 1) ? fh - y : zoneH;
-        results.add(ZoneResult(
-          tensor: processRegion(rgb, x, y, w, h),
-          cx: x + w ~/ 2,
-          cy: y + h ~/ 2,
-        ));
+        results.add(
+          ZoneResult(
+            tensor: processRegion(rgb, x, y, w, h),
+            cx: x + w ~/ 2,
+            cy: y + h ~/ 2,
+          ),
+        );
       }
     }
     return results;
   }
 
-  /// Async wrapper for [scanGridZones].
+  /// Async wrapper for [scanGridZones] — tries the OpenCV JNI batch path first.
   ///
-  /// Falls back to the pure-Dart [scanGridZones] path.  The OpenCV native
-  /// pipeline handles only the legacy horizontal-zone layout; grid scanning
-  /// uses the Dart path on all platforms.
+  /// When the native library is available, a single `preprocess_grid_zones`
+  /// MethodChannel call decodes YUV once and processes all [cols]×[rows] zones
+  /// in C++ (one frame decode regardless of grid size).  On failure or when
+  /// OpenCV is absent the work is offloaded to a worker isolate via [compute]
+  /// so the platform UI thread is never blocked by the Dart YUV pixel loop.
   static Future<List<ZoneResult>> scanGridZonesAsync(
     CameraImage image, {
     int cols = 3,
     int rows = 3,
   }) async {
-    return scanGridZones(image, cols: cols, rows: rows);
+    // ── Native OpenCV path ──────────────────────────────────────────────────
+    final native = await isNativeAvailable();
+    if (native) {
+      try {
+        final yPlane = image.planes[0];
+        final uPlane = image.planes[1];
+        final vPlane = image.planes[2];
+
+        final raw = await _channel
+            .invokeMethod<Float32List>('preprocess_grid_zones', {
+              'y_plane': yPlane.bytes,
+              'u_plane': uPlane.bytes,
+              'v_plane': vPlane.bytes,
+              'y_row_stride': yPlane.bytesPerRow,
+              'uv_row_stride': uPlane.bytesPerRow,
+              'uv_pixel_stride': uPlane.bytesPerPixel ?? 1,
+              'width': image.width,
+              'height': image.height,
+              'cols': cols,
+              'rows': rows,
+              'target_size': inputSize,
+            });
+
+        if (raw != null) {
+          final fw = image.width;
+          final fh = image.height;
+          final zoneW = fw ~/ cols;
+          final zoneH = fh ~/ rows;
+          final zoneLen = inputSize * inputSize * 3;
+
+          final results = <ZoneResult>[];
+          for (int row = 0; row < rows; row++) {
+            for (int col = 0; col < cols; col++) {
+              final x = col * zoneW;
+              final y = row * zoneH;
+              final w = (col == cols - 1) ? fw - x : zoneW;
+              final h = (row == rows - 1) ? fh - y : zoneH;
+              final off = (row * cols + col) * zoneLen;
+              results.add(
+                ZoneResult(
+                  tensor: Float32List.sublistView(raw, off, off + zoneLen),
+                  cx: x + w ~/ 2,
+                  cy: y + h ~/ 2,
+                ),
+              );
+            }
+          }
+          return results;
+        }
+        _nativeReady = false;
+      } catch (e) {
+        debugPrint('OpenCV native grid scan failed: $e');
+        _nativeReady = false;
+      }
+    }
+
+    // ── Dart fallback — offloaded to a worker isolate ───────────────────────
+    final msg = (
+      yBytes: image.planes[0].bytes,
+      uBytes: image.planes[1].bytes,
+      vBytes: image.planes[2].bytes,
+      yRowStride: image.planes[0].bytesPerRow,
+      uvRowStride: image.planes[1].bytesPerRow,
+      uvPixelStride: image.planes[1].bytesPerPixel ?? 1,
+      width: image.width,
+      height: image.height,
+      cols: cols,
+      rows: rows,
+      inputSize: inputSize,
+    );
+
+    final data = await compute(_scanGridZonesInIsolate, msg);
+    return data
+        .map((d) => ZoneResult(tensor: d.$1, cx: d.$2, cy: d.$3))
+        .toList();
   }
 
   /// Divides the camera frame into three equal horizontal zones

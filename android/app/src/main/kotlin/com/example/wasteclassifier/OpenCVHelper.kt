@@ -91,4 +91,28 @@ object OpenCVHelper {
         frameHeight: Int,
         targetSize: Int,
     ): FloatArray?
+
+    /**
+     * Preprocesses a [cols]×[rows] grid of zones in a single JNI call.
+     *
+     * The YUV frame is decoded once; all [cols]*[rows] zones are then cropped,
+     * resized to [targetSize]×[targetSize], and normalised in one pass.
+     * Zones are stored in row-major order (top-left → top-right, then next row).
+     *
+     * @return FloatArray of length ([cols]*[rows]) × [targetSize] × [targetSize] × 3,
+     *         or `null` if the native call fails.
+     */
+    external fun preprocessGridZones(
+        yPlane: ByteArray,
+        uPlane: ByteArray,
+        vPlane: ByteArray,
+        yRowStride: Int,
+        uvRowStride: Int,
+        uvPixelStride: Int,
+        frameWidth: Int,
+        frameHeight: Int,
+        cols: Int,
+        rows: Int,
+        targetSize: Int,
+    ): FloatArray?
 }

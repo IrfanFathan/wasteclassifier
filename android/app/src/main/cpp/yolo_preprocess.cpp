@@ -211,6 +211,79 @@ extern "C"
 #endif
     }
 
+    // ── preprocessGridZones ───────────────────────────────────────────────────
+    //
+    // Processes a cols×rows grid of zones in one JNI call — one YUV→BGR decode
+    // for the full frame, then cols*rows crops/resizes.
+    //
+    // Returns a float array of length (cols*rows) × target² × 3, where zones
+    // are stored in row-major order (row 0 left-to-right, then row 1, etc.).
+    JNIEXPORT jfloatArray JNICALL
+    Java_com_example_wasteclassifier_OpenCVHelper_preprocessGridZones(
+        JNIEnv *env, jobject /* obj */,
+        jbyteArray j_y_plane, jbyteArray j_u_plane, jbyteArray j_v_plane,
+        jint y_row_stride, jint uv_row_stride, jint uv_pixel_stride,
+        jint frame_width, jint frame_height,
+        jint cols, jint rows,
+        jint target_size)
+    {
+#ifndef HAVE_OPENCV
+        LOGI("preprocessGridZones: OpenCV not compiled in — returning null");
+        return nullptr;
+#else
+        YuvPlanes planes;
+        if (!planes.acquire(env, j_y_plane, j_u_plane, j_v_plane))
+        {
+            LOGE("preprocessGridZones: GetByteArrayElements returned null");
+            planes.release();
+            return nullptr;
+        }
+
+        // Single full-frame YUV → BGR decode.
+        cv::Mat full_bgr = yuv420_to_bgr(
+            planes.y(), y_row_stride,
+            planes.u(), planes.v(),
+            uv_row_stride, uv_pixel_stride,
+            frame_width, frame_height);
+        planes.release();
+
+        const int zone_w_base = frame_width / cols;
+        const int zone_h_base = frame_height / rows;
+        const int total_zones = cols * rows;
+        const int zone_len = target_size * target_size * 3;
+        const int total_len = total_zones * zone_len;
+
+        jfloatArray j_result = env->NewFloatArray(total_len);
+        if (!j_result)
+        {
+            LOGE("preprocessGridZones: NewFloatArray(%d) failed", total_len);
+            return nullptr;
+        }
+
+        std::vector<float> output(total_len);
+
+        for (int row = 0; row < rows; ++row)
+        {
+            for (int col = 0; col < cols; ++col)
+            {
+                const int x = col * zone_w_base;
+                const int y = row * zone_h_base;
+                const int w = (col == cols - 1) ? frame_width - x : zone_w_base;
+                const int h = (row == rows - 1) ? frame_height - y : zone_h_base;
+
+                const int zone_idx = row * cols + col;
+                zone_to_float32(full_bgr, x, y, w, h, target_size,
+                                output.data() + zone_idx * zone_len);
+            }
+        }
+
+        env->SetFloatArrayRegion(j_result, 0, total_len, output.data());
+        LOGI("preprocessGridZones OK: frame=%dx%d grid=%dx%d target=%d",
+             frame_width, frame_height, cols, rows, target_size);
+        return j_result;
+#endif
+    }
+
     // ── preprocessHorizontalZones ─────────────────────────────────────────────
     //
     // Processes all 3 horizontal thirds in one JNI call.

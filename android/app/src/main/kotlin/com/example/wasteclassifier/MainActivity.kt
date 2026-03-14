@@ -136,6 +136,60 @@ class MainActivity : FlutterActivity() {
                         }
                     }
 
+                    // ── preprocess_grid_zones ─────────────────────────────
+                    // Batch variant: processes a cols×rows grid of zones in
+                    // one JNI call — single YUV decode, all zones in one pass.
+                    //
+                    // Arguments:
+                    //   y_plane / u_plane / v_plane : ByteArray
+                    //   y_row_stride / uv_row_stride / uv_pixel_stride : Int
+                    //   width / height : Int
+                    //   cols / rows    : Int
+                    //   target_size    : Int
+                    //
+                    // Returns Float32List of length (cols*rows) × target² × 3.
+                    "preprocess_grid_zones" -> {
+                        if (!OpenCVHelper.isAvailable) {
+                            result.error(
+                                "OPENCV_UNAVAILABLE",
+                                "Native yolo_preprocess library not loaded",
+                                null
+                            )
+                            return@setMethodCallHandler
+                        }
+
+                        try {
+                            @Suppress("UNCHECKED_CAST")
+                            val args = call.arguments as Map<String, Any>
+
+                            val floats = OpenCVHelper.preprocessGridZones(
+                                yPlane          = args["y_plane"]          as ByteArray,
+                                uPlane          = args["u_plane"]          as ByteArray,
+                                vPlane          = args["v_plane"]          as ByteArray,
+                                yRowStride      = args["y_row_stride"]     as Int,
+                                uvRowStride     = args["uv_row_stride"]    as Int,
+                                uvPixelStride   = args["uv_pixel_stride"]  as Int,
+                                frameWidth      = args["width"]            as Int,
+                                frameHeight     = args["height"]           as Int,
+                                cols            = args["cols"]             as Int,
+                                rows            = args["rows"]             as Int,
+                                targetSize      = args["target_size"]      as Int,
+                            )
+
+                            if (floats != null) {
+                                result.success(floats)
+                            } else {
+                                result.error(
+                                    "PREPROCESS_FAILED",
+                                    "Native preprocessGridZones returned null",
+                                    null
+                                )
+                            }
+                        } catch (e: Exception) {
+                            result.error("PREPROCESS_ERROR", e.message, null)
+                        }
+                    }
+
                     else -> result.notImplemented()
                 }
             }
