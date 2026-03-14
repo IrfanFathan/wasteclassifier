@@ -230,10 +230,12 @@ class _DetectionScreenState extends State<DetectionScreen>
     try {
       final numClasses = _labels.length;
 
-      // ── Step 1: Scan 3 horizontal zones (left / centre / right) ───────
-      // Uses OpenCV JNI native path when available (single plane-transfer),
-      // falls back to pure Dart YUV→RGB + crop otherwise.
-      final zones = await ImageProcessor.scanHorizontalZonesAsync(image);
+      // ── Step 1: Scan a 3×3 grid of zones ──────────────────────────────
+      // Each zone carries its true pixel centre (cx, cy), so the winning
+      // zone's position reflects both horizontal and vertical location
+      // in the frame — fixing the bug where cy was always fh/2 and the
+      // grid Y coordinate was permanently stuck at 0.
+      final zones = await ImageProcessor.scanGridZonesAsync(image);
 
       // ── Step 2: Run TFLite on each zone; keep the highest-confidence ──
       final outputBuffer = List<double>.filled(numClasses, 0.0);

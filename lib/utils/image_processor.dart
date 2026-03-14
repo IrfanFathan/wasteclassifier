@@ -164,6 +164,57 @@ class ImageProcessor {
     return _normalizeImage(resized);
   }
 
+  /// Divides the camera frame into a [cols]×[rows] grid of zones and returns
+  /// one [ZoneResult] per zone.
+  ///
+  /// The YUV→RGB conversion is performed **once** for the full frame; all
+  /// zone regions are then cropped from that single decoded image.
+  ///
+  /// Each zone's [ZoneResult.cx] and [ZoneResult.cy] reflect the actual pixel
+  /// centre of that zone in the original frame, enabling the caller to map
+  /// detections to both horizontal **and** vertical grid positions.
+  static List<ZoneResult> scanGridZones(
+    CameraImage image, {
+    int cols = 3,
+    int rows = 3,
+  }) {
+    final rgb = _convertYUV420toRGB(image);
+    final fw = image.width;
+    final fh = image.height;
+    final zoneW = fw ~/ cols;
+    final zoneH = fh ~/ rows;
+
+    final results = <ZoneResult>[];
+    for (int row = 0; row < rows; row++) {
+      for (int col = 0; col < cols; col++) {
+        final x = col * zoneW;
+        final y = row * zoneH;
+        // Last column/row absorbs any rounding remainder.
+        final w = (col == cols - 1) ? fw - x : zoneW;
+        final h = (row == rows - 1) ? fh - y : zoneH;
+        results.add(ZoneResult(
+          tensor: processRegion(rgb, x, y, w, h),
+          cx: x + w ~/ 2,
+          cy: y + h ~/ 2,
+        ));
+      }
+    }
+    return results;
+  }
+
+  /// Async wrapper for [scanGridZones].
+  ///
+  /// Falls back to the pure-Dart [scanGridZones] path.  The OpenCV native
+  /// pipeline handles only the legacy horizontal-zone layout; grid scanning
+  /// uses the Dart path on all platforms.
+  static Future<List<ZoneResult>> scanGridZonesAsync(
+    CameraImage image, {
+    int cols = 3,
+    int rows = 3,
+  }) async {
+    return scanGridZones(image, cols: cols, rows: rows);
+  }
+
   /// Divides the camera frame into three equal horizontal zones
   /// (left / centre / right) and returns one [ZoneResult] per zone.
   ///
