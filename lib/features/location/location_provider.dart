@@ -27,7 +27,9 @@ class LocationPingNotifier extends AsyncNotifier<String?> {
     final prefs = await SharedPreferences.getInstance();
     final deviceId = prefs.getString(AppConstants.prefDeviceId);
     if (deviceId == null) {
-      debugPrint('LocationPingNotifier: device_id not yet registered, skipping');
+      debugPrint(
+        'LocationPingNotifier: device_id not yet registered, skipping',
+      );
       return;
     }
     final id = await LocationRepository.pingOnce(deviceId);
@@ -40,5 +42,5 @@ class LocationPingNotifier extends AsyncNotifier<String?> {
 
 final locationPingProvider =
     AsyncNotifierProvider<LocationPingNotifier, String?>(
-  LocationPingNotifier.new,
-);
+      LocationPingNotifier.new,
+    );

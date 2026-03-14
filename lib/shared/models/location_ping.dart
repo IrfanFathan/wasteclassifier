@@ -27,8 +27,9 @@ class LocationPing {
       deviceId: json['device_id'] as String,
       latitude: (json['latitude'] as num).toDouble(),
       longitude: (json['longitude'] as num).toDouble(),
-      accuracyM:
-          json['accuracy_m'] != null ? (json['accuracy_m'] as num).toDouble() : null,
+      accuracyM: json['accuracy_m'] != null
+          ? (json['accuracy_m'] as num).toDouble()
+          : null,
       gsmCellId: json['gsm_cell_id'] as String?,
       networkProvider: json['network_provider'] as String?,
       signalStrength: json['signal_strength'] as int?,

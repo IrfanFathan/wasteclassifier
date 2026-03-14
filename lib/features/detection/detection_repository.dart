@@ -93,7 +93,7 @@ class DetectionRepository {
         'h': zoneH,
         'label': label,
         'confidence': confidence,
-      }
+      },
     ];
 
     // 7. Insert detection event.
@@ -108,7 +108,9 @@ class DetectionRepository {
         'image_url': ?imageUrl,
         'bounding_boxes': boundingBoxes,
       });
-      debugPrint('DetectionRepository: detection_event inserted for label=$label');
+      debugPrint(
+        'DetectionRepository: detection_event inserted for label=$label',
+      );
     } catch (e) {
       debugPrint('DetectionRepository: insert failed: $e');
     }

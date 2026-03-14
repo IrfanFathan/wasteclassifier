@@ -95,14 +95,19 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── WASTO Tracker state ─────────────────────────────────────────────────
   /// Stores the most recent camera frame for snapshot capture.
   CameraImage? _lastFrame;
+
   /// Prevents flooding Supabase with duplicate detections.
   DateTime? _lastDetectionSaved;
+
   /// Countdown timer that ticks every second.
   Timer? _pingTimer;
+
   /// Seconds remaining until the next location ping fires.
   int _pingCountdownSec = 120;
+
   /// Current GPS fix quality.
   GpsStatus _gpsStatus = GpsStatus.noFix;
+
   /// UUID of this device in Supabase (loaded from SharedPreferences).
   String? _deviceId;
 
@@ -464,8 +469,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   void _onSecondTick(Timer _) {
     if (!mounted) return;
     setState(() {
-      _pingCountdownSec =
-          _pingCountdownSec > 1 ? _pingCountdownSec - 1 : 120;
+      _pingCountdownSec = _pingCountdownSec > 1 ? _pingCountdownSec - 1 : 120;
     });
     _updateGpsStatus();
   }
@@ -483,8 +487,8 @@ class _DetectionScreenState extends State<DetectionScreen>
         _gpsStatus = pos.accuracy < 50
             ? GpsStatus.fix
             : pos.accuracy < 200
-                ? GpsStatus.lowAccuracy
-                : GpsStatus.noFix;
+            ? GpsStatus.lowAccuracy
+            : GpsStatus.noFix;
       });
     } catch (_) {
       if (mounted) setState(() => _gpsStatus = GpsStatus.noFix);
@@ -503,7 +507,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     if (_deviceId == null) return;
     final now = DateTime.now();
     if (_lastDetectionSaved != null &&
-        now.difference(_lastDetectionSaved!) < AppConstants.kDetectionCooldown) {
+        now.difference(_lastDetectionSaved!) <
+            AppConstants.kDetectionCooldown) {
       return;
     }
     _lastDetectionSaved = now;
@@ -748,10 +753,7 @@ class _DetectionScreenState extends State<DetectionScreen>
           Container(
             width: 7,
             height: 7,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: gpsColor,
-            ),
+            decoration: BoxDecoration(shape: BoxShape.circle, color: gpsColor),
           ),
           const SizedBox(width: 6),
           Text(

@@ -25,14 +25,11 @@ class DeviceRepository {
 
     final response = await supabase
         .from(AppConstants.tableDevices)
-        .upsert(
-          {
-            'device_name': deviceName,
-            'gsm_iccid': deviceId,
-            'last_seen_at': DateTime.now().toIso8601String(),
-          },
-          onConflict: 'gsm_iccid',
-        )
+        .upsert({
+          'device_name': deviceName,
+          'gsm_iccid': deviceId,
+          'last_seen_at': DateTime.now().toIso8601String(),
+        }, onConflict: 'gsm_iccid')
         .select('id')
         .single();
 
