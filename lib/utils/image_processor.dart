@@ -5,8 +5,17 @@ import 'package:image/image.dart' as img;
 class ImageProcessor {
   static const int inputSize = 224;
 
+  /// Converts a YUV420 CameraImage to an RGB [img.Image].
+  ///
+  /// This is the shared first step for both detection and classification.
+  static img.Image convertToRgb(CameraImage cameraImage) {
+    return _convertYUV420toRGB(cameraImage);
+  }
+
   /// Converts a YUV420 CameraImage to a normalized Float32 tensor
   /// suitable for a TFLite model with input shape [1, 224, 224, 3].
+  ///
+  /// This processes the **entire** frame as a single input.
   static Float32List processImage(CameraImage cameraImage) {
     final convertedImage = _convertYUV420toRGB(cameraImage);
     final resized = img.copyResize(
@@ -14,6 +23,28 @@ class ImageProcessor {
       width: inputSize,
       height: inputSize,
     );
+    return _normalizeImage(resized);
+  }
+
+  /// Crops the region at ([x], [y]) with size ([w] × [h]) from [fullImage],
+  /// resizes to 224×224, and normalises for TFLite inference.
+  ///
+  /// Use this to classify a specific detected object region.
+  static Float32List processRegion(
+    img.Image fullImage,
+    int x,
+    int y,
+    int w,
+    int h,
+  ) {
+    // Clamp bounds to stay within the image.
+    final cx = x.clamp(0, fullImage.width - 1);
+    final cy = y.clamp(0, fullImage.height - 1);
+    final cw = w.clamp(1, fullImage.width - cx);
+    final ch = h.clamp(1, fullImage.height - cy);
+
+    final cropped = img.copyCrop(fullImage, x: cx, y: cy, width: cw, height: ch);
+    final resized = img.copyResize(cropped, width: inputSize, height: inputSize);
     return _normalizeImage(resized);
   }
 

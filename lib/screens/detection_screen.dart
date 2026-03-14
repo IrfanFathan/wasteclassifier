@@ -1,19 +1,44 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
+import '../core/grid_mapper.dart';
+import '../communication/robot_controller.dart';
 import '../models/app_config.dart';
 import '../models/bin_category.dart';
+import '../models/calibration_config.dart';
+import '../ui/grid_overlay_painter.dart';
 import '../utils/config_manager.dart';
 import '../utils/image_processor.dart';
 import '../utils/model_manager.dart';
+import '../utils/waste_locator.dart';
+import '../services/esp32_service.dart';
 import 'bin_setup_screen.dart';
 import 'upload_screen.dart';
 
-/// Represents the current detection state.
+// ─── Detection State ──────────────────────────────────────────────────────
+
+/// Represents the three possible detection outcomes.
 enum DetectionState { waiting, detected, unmapped }
 
+// ─── Grid Coordinate ──────────────────────────────────────────────────────
+// Now uses GridPosition from lib/core/grid_mapper.dart
+// (8×8 center-origin Cartesian system)
+
+// ─── DetectionScreen ──────────────────────────────────────────────────────
+
+/// Main camera screen for waste classification.
+///
+/// Features:
+///   - Full-screen camera preview (correct 4:3 aspect ratio).
+///   - 8×8 center-origin grid overlay with Cartesian labels.
+///   - Active cell highlight showing where waste is located in frame.
+///   - Bottom-anchored result panel showing (gridX, gridY) coordinates.
+///   - Robot navigation command from [WasteLocator].
+///   - Grid-based pick commands sent to ESP32 robotic arm controller.
 class DetectionScreen extends StatefulWidget {
   const DetectionScreen({super.key});
 
@@ -21,32 +46,73 @@ class DetectionScreen extends StatefulWidget {
   State<DetectionScreen> createState() => _DetectionScreenState();
 }
 
-class _DetectionScreenState extends State<DetectionScreen> {
-  // ─── Camera ───
+class _DetectionScreenState extends State<DetectionScreen>
+    with SingleTickerProviderStateMixin {
+  // ─── Camera ─────────────────────────────────────────────────────────────
   CameraController? _cameraController;
   bool _cameraReady = false;
   String? _cameraError;
 
-  // ─── Model ───
+  // ─── Model ──────────────────────────────────────────────────────────────
   Interpreter? _interpreter;
   bool _modelReady = false;
   bool _isProcessing = false;
 
-  // ─── Config ───
+  // ─── Config ─────────────────────────────────────────────────────────────
   AppConfig? _config;
   List<String> _labels = [];
+  CalibrationConfig _calibration = CalibrationConfig();
 
-  // ─── Detection Result ───
+  // ─── Detection Result ───────────────────────────────────────────────────
   DetectionState _state = DetectionState.waiting;
   String _detectedLabel = '';
   double _confidence = 0.0;
   BinCategory? _detectedBin;
 
+  // ─── Spatial / Grid ─────────────────────────────────────────────────────
+  /// Active grid position where waste was detected (null when waiting).
+  GridPosition? _activePosition;
+
+  /// Robot navigation location from [WasteLocator].
+  WasteLocation _wasteLocation = WasteLocation.unknown;
+
+  // ─── ESP32 ──────────────────────────────────────────────────────────────
+  DateTime? _lastEspTransmission;
+
+  // ─── Animation ───────────────────────────────────────────────────────────
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnim;
+
+  // ── Design tokens ────────────────────────────────────────────────────────
+  static const Color _accentGreen = Color(0xFF00E676);
+  static const Color _accentAmber = Color(0xFFFFD740);
+  static const Color _accentRed   = Color(0xFFFF5252);
+  static const Color _accentCyan  = Color(0xFF00B0FF);
+  static const Color _panelBg     = Color(0xE6121212); // 90% opaque dark
+
   @override
   void initState() {
     super.initState();
+
+    // Lock the detection screen to landscape orientation.
+    // Both left and right landscape are allowed so the user can hold the
+    // device either way when mounted on a robot.
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.35, end: 0.85).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
     _initialize();
   }
+
+  // ─── Initialisation ──────────────────────────────────────────────────────
 
   Future<void> _initialize() async {
     await _loadConfig();
@@ -57,10 +123,12 @@ class _DetectionScreenState extends State<DetectionScreen> {
   Future<void> _loadConfig() async {
     final config = await ConfigManager.loadConfig();
     final labels = await ConfigManager.loadLabels();
+    final calibration = await ConfigManager.loadCalibration();
     if (mounted) {
       setState(() {
         _config = config;
         _labels = labels;
+        if (calibration != null) _calibration = calibration;
       });
     }
   }
@@ -83,6 +151,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
     }
   }
 
+  /// Starts the back camera at [ResolutionPreset.high] (native 4:3 on Android).
   Future<void> _initCamera() async {
     try {
       final cameras = await availableCameras();
@@ -93,7 +162,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
         return;
       }
 
-      // Prefer back camera
       final backCamera = cameras.firstWhere(
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
@@ -101,7 +169,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
       final controller = CameraController(
         backCamera,
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         imageFormatGroup: ImageFormatGroup.yuv420,
         enableAudio: false,
       );
@@ -119,7 +187,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
       if (mounted) {
         setState(() {
           _cameraError = e.code == 'CameraAccessDenied'
-              ? 'Camera permission denied. Please enable it in App Settings.'
+              ? 'Camera permission denied. Enable it in App Settings.'
               : 'Camera error: ${e.description}';
         });
       }
@@ -130,77 +198,86 @@ class _DetectionScreenState extends State<DetectionScreen> {
     }
   }
 
+  // ─── Inference ───────────────────────────────────────────────────────────
+
   void _onCameraFrame(CameraImage image) {
-    if (_isProcessing || !_modelReady || _interpreter == null || _config == null) {
-      return;
-    }
+    if (_isProcessing || !_modelReady || _interpreter == null || _config == null) return;
     _isProcessing = true;
     _runInference(image);
   }
 
   void _runInference(CameraImage image) {
     try {
-      // ImageProcessor returns a flat Float32List of length 1*224*224*3 = 150528
-      final inputFlat = ImageProcessor.processImage(image);
-
-      // tflite_flutter 0.12.x: for input, pass as Uint8List (raw bytes).
-      // getInputShapeIfDifferent returns null for Uint8List, so no resize is
-      // attempted. setTo() copies the raw bytes directly into the native tensor.
-      // This avoids a shape mismatch (Float32List.shape=[150528] vs model [1,224,224,3]).
-      final inputBytes = inputFlat.buffer.asUint8List();
-
-      // Output: model produces shape [1, numClasses].
-      // Pass List<List<double>> so _duplicateList shape check passes.
       final numClasses = _labels.length;
-      final outputBuffer = List<double>.filled(numClasses, 0.0);
-      final output = [outputBuffer]; // shape [1, numClasses]
 
+      // ── Step 1: Preprocess full frame ──────────────────────────────────
+      final inputFlat  = ImageProcessor.processImage(image);
+      final inputBytes = inputFlat.buffer.asUint8List();
+      
+      // ── Step 2: Run TFLite Inference ───────────────────────────────────
+      final outputBuffer = List<double>.filled(numClasses, 0.0);
+      final output = [outputBuffer];
       _interpreter!.run(inputBytes, output);
 
-      final probabilities = output[0];
-      double maxProb = 0.0;
-      int maxIdx = 0;
-      for (int i = 0; i < probabilities.length; i++) {
-        if (probabilities[i] > maxProb) {
-          maxProb = probabilities[i];
-          maxIdx = i;
-        }
+      final probs = output[0];
+      double maxP = 0.0;
+      int    maxI = 0;
+      for (int i = 0; i < probs.length; i++) {
+        if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
       }
+      final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
 
-      final detectedLabel =
-          maxIdx < _labels.length ? _labels[maxIdx] : 'Unknown';
-
-      _processResult(detectedLabel, maxProb);
+      // ── Step 3: Process Results ────────────────────────────────────────
+      _processResult(
+        label, maxP,
+        image.width ~/ 2, image.height ~/ 2, // Default to center for full frame
+        image.width, image.height,
+      );
     } catch (e) {
-      debugPrint('Inference error (skipping frame): $e');
+      debugPrint('Inference error: $e');
     } finally {
       _isProcessing = false;
     }
   }
 
-  void _processResult(String label, double confidence) {
+  /// Updates detection state from pixel coordinates.
+  ///
+  /// [cx], [cy]  — pixel centre of the detected object.
+  /// [fw], [fh]  — frame dimensions.
+  void _processResult(
+    String label, double confidence,
+    int cx, int cy, int fw, int fh,
+  ) {
     if (!mounted) return;
     final config = _config!;
 
-    // Below threshold → waiting state
+    // Below threshold → waiting.
     if (confidence < config.confidenceThreshold) {
       if (_state != DetectionState.waiting) {
-        setState(() => _state = DetectionState.waiting);
+        setState(() {
+          _state           = DetectionState.waiting;
+          _activePosition  = null;
+          _wasteLocation = WasteLocation.unknown;
+        });
       }
       return;
     }
 
-    // Check if label is a "nothing" label
+    // Nothing label → waiting.
     final isNothing = config.nothingLabels
         .any((n) => n.toLowerCase() == label.toLowerCase());
     if (isNothing) {
       if (_state != DetectionState.waiting) {
-        setState(() => _state = DetectionState.waiting);
+        setState(() {
+          _state           = DetectionState.waiting;
+          _activePosition  = null;
+          _wasteLocation = WasteLocation.unknown;
+        });
       }
       return;
     }
 
-    // Find matching bin
+    // Find bin category.
     BinCategory? matchedBin;
     for (final bin in config.bins) {
       if (bin.mappedLabels.any((m) => m.toLowerCase() == label.toLowerCase())) {
@@ -209,40 +286,94 @@ class _DetectionScreenState extends State<DetectionScreen> {
       }
     }
 
+    // ── 8×8 Center-origin grid position ───────────────────────────────────
+    final gridPos = GridMapper.fromPixel(
+      pixelX: cx.toDouble(),
+      pixelY: cy.toDouble(),
+    );
+
+    // ── Robot navigation (WasteLocator) ──────────────────────────────────
+    final location = WasteLocator.compute(
+      pixelX: cx,
+      pixelY: cy,
+      frameWidth: fw,
+      frameHeight: fh,
+      confidence: confidence,
+      calibration: _calibration,
+      minConfidence: config.confidenceThreshold,
+    );
+
     setState(() {
-      _detectedLabel = label;
-      _confidence = confidence;
+      _detectedLabel   = label;
+      _confidence      = confidence;
+      _activePosition  = gridPos;
+      _wasteLocation   = location;
+
       if (matchedBin != null) {
-        _state = DetectionState.detected;
+        _state       = DetectionState.detected;
         _detectedBin = matchedBin;
+        _transmitToEsp32(label, matchedBin, confidence, location, gridPos);
       } else {
-        _state = DetectionState.unmapped;
+        _state       = DetectionState.unmapped;
         _detectedBin = null;
       }
     });
   }
 
+  void _transmitToEsp32(String label, BinCategory bin, double confidence, WasteLocation location, GridPosition gridPos) {
+    if (!Esp32Service().isConnected) return;
+    
+    // Throttle transmissions to once per second so we don't spam the ESP32
+    final now = DateTime.now();
+    if (_lastEspTransmission != null &&
+        now.difference(_lastEspTransmission!).inMilliseconds < 1000) {
+      return;
+    }
+    _lastEspTransmission = now;
+
+    // Send waste classification data.
+    Esp32Service().sendWasteData(
+      label: label,
+      binId: bin.id,
+      binName: bin.name,
+      confidence: confidence,
+      direction: location.direction.name,
+      distanceCm: location.estimatedDistanceCm,
+      coordX: gridPos.centerX,
+      coordY: gridPos.centerY,
+      gridCell: gridPos.label,
+      pixelX: gridPos.pixelX,
+      pixelY: gridPos.pixelY,
+    );
+
+    // Also send the structured grid command for robotic arm.
+    final command = RobotController.createRobotCommand(gridPos);
+    Esp32Service().sendRobotCommand(command);
+  }
+
+  // ─── Settings ────────────────────────────────────────────────────────────
+
   Future<void> _confirmChangeModel() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF16213E),
-        title: const Text('Change Model',
-            style: TextStyle(color: Colors.white)),
-        content: const Text(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Change Model',
+            style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600)),
+        content: Text(
           'This will clear your model and all bin settings. Continue?',
-          style: TextStyle(color: Colors.white70),
+          style: GoogleFonts.inter(color: Colors.white60),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.white54)),
+            child: Text('Cancel', style: GoogleFonts.inter(color: Colors.white54)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Clear & Change',
-                style: TextStyle(color: Colors.redAccent)),
+            child: Text('Clear & Change',
+                style: GoogleFonts.inter(color: _accentRed, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -251,6 +382,10 @@ class _DetectionScreenState extends State<DetectionScreen> {
       await ModelManager.deleteModelFiles();
       await ConfigManager.clearAll();
       if (!mounted) return;
+      
+      // Allow portrait mode for UploadScreen.
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const UploadScreen()),
         (_) => false,
@@ -262,334 +397,563 @@ class _DetectionScreenState extends State<DetectionScreen> {
     await _cameraController?.stopImageStream();
     final labels = await ConfigManager.loadLabels();
     if (!mounted) return;
+    
+    // Switch to portrait mode explicitly for the BinSetupScreen.
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => BinSetupScreen(
-          labels: labels,
-          existingConfig: _config,
-        ),
+        builder: (_) => BinSetupScreen(labels: labels, existingConfig: _config),
       ),
     );
+    
+    // Restore landscape mode when returning to the camera.
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    
     await _loadConfig();
     _cameraController?.startImageStream(_onCameraFrame);
   }
 
   @override
   void dispose() {
+    _pulseController.dispose();
     _cameraController?.stopImageStream();
     _cameraController?.dispose();
     _interpreter?.close();
+    // Restore all orientations when leaving the detection screen so that
+    // other screens (upload, bin setup) are not locked to landscape.
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     super.dispose();
   }
+
+  // ─── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF16213E),
-        automaticallyImplyLeading: false,
-        title: const Text(
-          '♻️ Waste Classifier',
-          style:
-              TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white),
-            tooltip: 'Bin Settings',
-            onPressed: _openSettings,
-          ),
-          IconButton(
-            icon:
-                const Icon(Icons.swap_horiz_outlined, color: Colors.white),
-            tooltip: 'Change Model',
-            onPressed: _confirmChangeModel,
-          ),
-        ],
-        elevation: 0,
-      ),
+      backgroundColor: Colors.black,
       body: _buildBody(),
     );
   }
 
   Widget _buildBody() {
-    if (_cameraError != null) {
-      return _cameraErrorWidget();
-    }
-    if (!_cameraReady) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: Colors.greenAccent),
-            SizedBox(height: 16),
-            Text('Initializing camera...',
-                style: TextStyle(color: Colors.white70)),
-          ],
-        ),
-      );
-    }
+    if (_cameraError != null) return _buildErrorView();
+    if (!_cameraReady || _cameraController == null) return _buildLoadingView();
 
-    final binColor = _detectedBin != null
-        ? Color(_detectedBin!.colorHex)
-        : Colors.transparent;
+    // Determine accent colour from current state.
+    final accent = _stateAccent();
 
-    return Column(
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        // ─── Camera Preview (top 60%) ───
-        Expanded(
-          flex: 6,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Stack(
-              children: [
-                // Camera box with colored border glow
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: _state == DetectionState.detected
-                        ? [
-                            BoxShadow(
-                              color: binColor.withValues(alpha: 0.6),
-                              blurRadius: 18,
-                              spreadRadius: 2,
-                            )
-                          ]
-                        : [],
-                    border: Border.all(
-                      color: _state == DetectionState.detected
-                          ? binColor
-                          : _state == DetectionState.unmapped
-                              ? const Color(0xFFFF9800)
-                              : Colors.white12,
-                      width: _state != DetectionState.waiting ? 2.5 : 1.0,
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: _cameraController != null
-                        ? CameraPreview(_cameraController!)
-                        : Container(color: const Color(0xFF0D0D1A)),
-                  ),
-                ),
-
-                // Confidence bar at bottom of camera
-                if (_state == DetectionState.detected)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                          bottom: Radius.circular(20)),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        height: 5,
-                        width: double.infinity,
-                        child: LinearProgressIndicator(
-                          value: _confidence,
-                          backgroundColor: Colors.transparent,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(binColor),
-                          minHeight: 5,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-
-        // ─── Detection Result Panel (bottom 40%) ───
-        Expanded(
-          flex: 4,
+        // ── 1. Full-screen camera preview ───────────────────────────────
+        Positioned.fill(
           child: Container(
-            width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: _buildResultPanel(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildResultPanel() {
-    switch (_state) {
-      case DetectionState.waiting:
-        return _waitingState();
-      case DetectionState.detected:
-        return _detectedState();
-      case DetectionState.unmapped:
-        return _unmappedState();
-    }
-  }
-
-  Widget _waitingState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(Icons.search,
-            size: 52,
-            color: Colors.white.withValues(alpha: 0.25)),
-        const SizedBox(height: 16),
-        Text(
-          'Hold a waste item in front of the camera...',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.5),
-            fontSize: 15,
-            height: 1.5,
-          ),
-          textAlign: TextAlign.center,
-        ),
-        if (!_modelReady) ...[
-          const SizedBox(height: 12),
-          Text(
-            'Loading model...',
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.3),
-                fontSize: 12),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _detectedState() {
-    final bin = _detectedBin!;
-    final binColor = Color(bin.colorHex);
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(
-          _detectedLabel,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.3,
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '${(_confidence * 100).toStringAsFixed(1)}%',
-          style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 14,
-              fontWeight: FontWeight.w500),
-        ),
-        const SizedBox(height: 16),
-        // Bin badge
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: binColor.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: binColor, width: 1.5),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(bin.emoji, style: const TextStyle(fontSize: 22)),
-              const SizedBox(width: 8),
-              Text(
-                bin.name,
-                style: TextStyle(
-                  color: binColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _unmappedState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('⚠️', style: TextStyle(fontSize: 22)),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                _detectedLabel,
-                style: const TextStyle(
-                  color: Color(0xFFFF9800),
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+            color: Colors.black,
+            alignment: Alignment.center,
+            child: AspectRatio(
+              // Use the camera's reported aspect ratio directly (width/height).
+              // On Android this is ~0.75 in portrait, giving the correct 3:4
+              // portrait representation of a 4:3 sensor.
+              aspectRatio: _cameraController!.value.aspectRatio,
+              child: CameraPreview(_cameraController!),
             ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Not assigned to any bin',
-          style: TextStyle(color: Colors.white70, fontSize: 14),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'This item is not assigned to any bin.\nGo to Settings to map it.',
-          style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.4),
-              fontSize: 12,
-              height: 1.5),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 16),
-        ElevatedButton.icon(
-          onPressed: _openSettings,
-          icon: const Icon(Icons.settings_outlined, size: 16),
-          label: const Text('Assign Now'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFFF9800),
-            foregroundColor: Colors.black,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           ),
+        ),
+
+        // ── 2. 8×8 Center-origin Grid overlay ────────────────────────────
+        Positioned.fill(
+          child: Grid8x8Overlay(
+            activePosition: _activePosition,
+            accentColor: accent,
+            pulseAnimation: _pulseAnim,
+          ),
+        ),
+
+        // ── 3. Status badge (top-left) ──────────────────────────────────
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 12,
+          left: 16,
+          child: _buildStatusBadge(accent),
+        ),
+
+        // ── 4. Action buttons (top-right) ───────────────────────────────
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 16,
+          right: MediaQuery.of(context).padding.right + 16,
+          child: _buildActionButtons(),
+        ),
+
+        // ── 5. Bottom result panel ──────────────────────────────────────
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: _buildResultPanel(accent),
         ),
       ],
     );
   }
 
-  Widget _cameraErrorWidget() {
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  /// Returns the accent colour for the current detection state.
+  Color _stateAccent() {
+    return switch (_state) {
+      DetectionState.detected  => _detectedBin != null
+          ? Color(_detectedBin!.colorHex) : _accentGreen,
+      DetectionState.unmapped  => _accentAmber,
+      DetectionState.waiting   => Colors.white38,
+    };
+  }
+
+  // ─── Widget builders ──────────────────────────────────────────────────────
+
+  Widget _buildLoadingView() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(color: _accentGreen, strokeWidth: 2),
+          const SizedBox(height: 20),
+          Text('Initialising camera…',
+              style: GoogleFonts.inter(color: Colors.white54, fontSize: 14)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorView() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.videocam_off,
-                size: 64, color: Colors.redAccent),
+            Icon(Icons.videocam_off_outlined, size: 56, color: _accentRed.withValues(alpha: 0.8)),
             const SizedBox(height: 16),
-            Text(
-              _cameraError!,
-              style:
-                  const TextStyle(color: Colors.redAccent, fontSize: 15),
-              textAlign: TextAlign.center,
-            ),
+            Text(_cameraError!,
+                style: GoogleFonts.inter(color: Colors.white60, fontSize: 14),
+                textAlign: TextAlign.center),
           ],
         ),
       ),
     );
   }
+
+  /// Top-left pill showing the scanning / detecting status.
+  Widget _buildStatusBadge(Color accent) {
+    final isDetected = _state != DetectionState.waiting;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: _panelBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDetected ? accent.withValues(alpha: 0.6) : Colors.white12,
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ESP32 Connection indicator
+          if (Esp32Service().isConnected) ...[
+            Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: _accentCyan,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          
+          // Dot indicator
+          AnimatedBuilder(
+            animation: _pulseAnim,
+            builder: (context, child) => Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isDetected
+                    ? accent.withValues(alpha: _pulseAnim.value)
+                    : Colors.white24,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isDetected ? 'DETECTED' : (_modelReady ? 'SCANNING' : 'LOADING'),
+            style: GoogleFonts.inter(
+              color: isDetected ? accent : Colors.white54,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Top-right icon buttons for settings and model change.
+  Widget _buildActionButtons() {
+    return Row(
+      children: [
+        if (Esp32Service().isConnected) ...[
+          _iconBtn(Icons.flash_on_rounded, () => Esp32Service().sendTrigger(), label: 'Trigger'),
+          const SizedBox(width: 8),
+        ],
+        _iconBtn(Icons.tune_rounded, _openSettings, label: 'Bin Setup'),
+        const SizedBox(width: 8),
+        _iconBtn(Icons.swap_horiz_rounded, _confirmChangeModel),
+      ],
+    );
+  }
+
+  Widget _iconBtn(IconData icon, VoidCallback onTap, {String? label}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 40,
+        padding: label != null
+            ? const EdgeInsets.symmetric(horizontal: 16)
+            : const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: _panelBg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white70, size: 20),
+            if (label != null) ...[
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  color: Colors.white70,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Bottom result panel — adapts to each detection state.
+  Widget _buildResultPanel(Color accent) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _panelBg,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        border: Border(
+          top: BorderSide(
+            color: _state != DetectionState.waiting
+                ? accent.withValues(alpha: 0.5)
+                : Colors.white10,
+            width: 1,
+          ),
+        ),
+      ),
+      padding: EdgeInsets.only(
+        top: 16,
+        left: 20,
+        right: 20,
+        bottom: MediaQuery.of(context).padding.bottom + 16,
+      ),
+      child: _state == DetectionState.waiting
+          ? _buildWaitingContent()
+          : _buildDetectionContent(accent),
+    );
+  }
+
+  /// Panel content when no waste is detected yet.
+  Widget _buildWaitingContent() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Pull handle
+        Container(
+          width: 36,
+          height: 3,
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: Colors.white12,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        Row(
+          children: [
+            const Icon(Icons.grid_4x4, color: Colors.white30, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              'Scanning 8×8 grid…',
+              style: GoogleFonts.inter(color: Colors.white38, fontSize: 13),
+            ),
+            const Spacer(),
+            if (!_modelReady)
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      color: Colors.white24, strokeWidth: 1.5),
+                  ),
+                  const SizedBox(width: 6),
+                  Text('Loading model',
+                      style: GoogleFonts.inter(color: Colors.white24, fontSize: 11)),
+                ],
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Point the camera at any waste object.\nDetection works across the entire frame.',
+          style: GoogleFonts.inter(
+            color: Colors.white24,
+            fontSize: 12,
+            height: 1.5,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Panel content when waste has been detected (mapped or unmapped).
+  Widget _buildDetectionContent(Color accent) {
+    final gridPos = _activePosition;
+    final cmd  = _wasteLocation.robotCommand;
+    final dist = _wasteLocation.estimatedDistanceCm;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Pull handle
+        Center(
+          child: Container(
+            width: 36,
+            height: 3,
+            margin: const EdgeInsets.only(bottom: 14),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+
+        // ── Row 1: Detection name + grid coordinate badge ────────────────
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Detected label + confidence
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _detectedLabel,
+                    style: GoogleFonts.inter(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      height: 1.1,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${(_confidence * 100).toStringAsFixed(1)}% confidence',
+                    style: GoogleFonts.inter(
+                      color: accent.withValues(alpha: 0.8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Grid coordinate badge (Cartesian)
+            if (gridPos != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: accent.withValues(alpha: 0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      '${gridPos.centerX.round()}, ${gridPos.centerY.round()}',
+                      style: GoogleFonts.robotoMono(
+                        color: accent,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'COORD (X, Y)',
+                      style: GoogleFonts.inter(
+                        color: accent.withValues(alpha: 0.6),
+                        fontSize: 9,
+                        letterSpacing: 1.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+
+        const SizedBox(height: 14),
+        Divider(color: Colors.white.withValues(alpha: 0.06), height: 1),
+        const SizedBox(height: 12),
+
+        // ── Row 2: Bin category + robot command ──────────────────────────
+        Row(
+          children: [
+            // Bin category chip
+            if (_state == DetectionState.detected && _detectedBin != null)
+              _buildBinChip(accent)
+            else
+              _buildUnmappedChip(),
+
+            const Spacer(),
+
+            // Robot command + distance
+            _buildRobotInfo(cmd, dist, accent),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBinChip(Color accent) {
+    final bin = _detectedBin!;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(bin.emoji, style: const TextStyle(fontSize: 16)),
+          const SizedBox(width: 6),
+          Text(
+            bin.name,
+            style: GoogleFonts.inter(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnmappedChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: _accentAmber.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _accentAmber.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('⚠️', style: TextStyle(fontSize: 14)),
+          const SizedBox(width: 6),
+          Text(
+            'Not mapped',
+            style: GoogleFonts.inter(
+              color: _accentAmber.withValues(alpha: 0.8),
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRobotInfo(String cmd, double? dist, Color accent) {
+    // Colour for command: red=stop, amber=turn, green=straight.
+    final cmdColor = cmd.startsWith('STOP')
+        ? _accentRed
+        : cmd.contains('TURN') ? _accentAmber : _accentGreen;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          cmd,
+          style: GoogleFonts.inter(
+            color: cmdColor,
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+            letterSpacing: 0.4,
+          ),
+        ),
+        if (dist != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            '~${dist.toStringAsFixed(0)} cm',
+            style: GoogleFonts.robotoMono(
+              color: Colors.white38,
+              fontSize: 11,
+            ),
+          ),
+        ],
+        // ── Grid & pixel coordinates ─────────────────────────────────────
+        if (_state != DetectionState.waiting && _activePosition != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            'px(${_activePosition!.pixelX}, ${_activePosition!.pixelY})',
+            style: GoogleFonts.robotoMono(
+              color: _accentCyan.withValues(alpha: 0.8),
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'cX: ${_activePosition!.centerX.toStringAsFixed(0)}  cY: ${_activePosition!.centerY.toStringAsFixed(0)}',
+            style: GoogleFonts.robotoMono(
+              color: _accentCyan.withValues(alpha: 0.6),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
 }
+
+// Grid overlay is now provided by Grid8x8Overlay from
+// lib/ui/grid_overlay_painter.dart
