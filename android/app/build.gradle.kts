@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.example.wasteclassifier"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -22,8 +22,8 @@ android {
     defaultConfig {
         applicationId = "com.example.wasteclassifier"
         // TFLite + camera requires at least API 21
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 24
+        targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
