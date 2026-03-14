@@ -9,7 +9,8 @@ class Esp32Service {
   factory Esp32Service() => _instance;
 
   // The predefined static IP for ESP32 connection
-  static const String esp32Ip = '192.168.1.200';
+  // ESP32 SoftAP default gateway address
+  static const String esp32Ip = '192.168.4.1';
   static const String baseUrl = 'http://$esp32Ip';
 
   bool _isConnected = false;
@@ -19,9 +20,9 @@ class Esp32Service {
   Future<bool> checkConnection() async {
     try {
       final response = await http
-          .get(Uri.parse('$baseUrl/connect'))
+          .get(Uri.parse('$baseUrl/ping'))
           .timeout(const Duration(seconds: 3));
-          
+
       if (response.statusCode == 200) {
         _isConnected = true;
         return true;
@@ -91,7 +92,7 @@ class Esp32Service {
     try {
       final response = await http
           .post(
-            Uri.parse('$baseUrl/connect'),
+            Uri.parse('$baseUrl/data'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(command),
           )

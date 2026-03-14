@@ -1,10 +1,12 @@
+import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import '../shared/constants.dart';
 
 class HttpServerService {
-  late final shelf_io.IOServer server;
+  HttpServer? _server;
   final Function(String wasteType) onDetectionReceived;
 
   HttpServerService({required this.onDetectionReceived});
@@ -14,12 +16,18 @@ class HttpServerService {
         .addMiddleware(logRequests())
         .addHandler(_echoRequest);
 
-    final srv = await shelf_io.serve(
-        pipeline, AppConstants.httpServerHost, AppConstants.httpServerPort);
-    
-    // We cannot access srv.server directly because serve returns HttpServer, 
-    // but IOServer doesn't exist as return type, it is dart:io HttpServer
-    print('Serving at http://${srv.address.host}:${srv.port}');
+    _server = await shelf_io.serve(
+      pipeline,
+      AppConstants.httpServerHost,
+      AppConstants.httpServerPort,
+    );
+
+    debugPrint('Serving at http://${_server!.address.host}:${_server!.port}');
+  }
+
+  Future<void> stop() async {
+    await _server?.close(force: true);
+    _server = null;
   }
 
   Future<Response> _echoRequest(Request request) async {
@@ -27,12 +35,12 @@ class HttpServerService {
       try {
         final bodyString = await request.readAsString();
         final jsonBody = jsonDecode(bodyString) as Map<String, dynamic>;
-        
+
         if (jsonBody.containsKey('waste_type')) {
           final wasteType = jsonBody['waste_type'] as String;
           // Trigger the callback
           onDetectionReceived(wasteType);
-          
+
           return Response.ok(
             jsonEncode({'status': 'received'}),
             headers: {'content-type': 'application/json'},
@@ -40,7 +48,9 @@ class HttpServerService {
         }
       } catch (e) {
         return Response.internalServerError(
-          body: jsonEncode({'error': 'Invalid request Format. Expected JSON with waste_type.'}),
+          body: jsonEncode({
+            'error': 'Invalid request Format. Expected JSON with waste_type.',
+          }),
         );
       }
     }

@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../utils/config_manager.dart';
 import '../utils/model_manager.dart';
 import 'bin_setup_screen.dart';
+import 'detection_screen.dart';
 
 enum _UploadState { idle, loading, success, error }
 
@@ -76,8 +77,10 @@ class _UploadScreenState extends State<UploadScreen>
       _zipStatus = 'Opening file picker…';
     });
     try {
-      final result = await FilePicker.platform
-          .pickFiles(type: FileType.any, dialogTitle: 'Select .zip file');
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        dialogTitle: 'Select .zip file',
+      );
       if (result == null || result.files.isEmpty) {
         setState(() {
           _zipState = _UploadState.idle;
@@ -117,8 +120,7 @@ class _UploadScreenState extends State<UploadScreen>
         _zipState = _UploadState.success;
         _modelExists = true;
         _labelsExist = true;
-        _zipStatus =
-            'Ready. ${labels.length} classes mapped.';
+        _zipStatus = 'Ready. ${labels.length} classes mapped.';
       });
       await Future.delayed(const Duration(milliseconds: 800));
       if (!mounted) return;
@@ -138,8 +140,10 @@ class _UploadScreenState extends State<UploadScreen>
       _modelStatus = 'Selecting model.tflite…';
     });
     try {
-      final result = await FilePicker.platform
-          .pickFiles(type: FileType.any, dialogTitle: 'Select model.tflite');
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        dialogTitle: 'Select model.tflite',
+      );
       if (result == null || result.files.isEmpty) {
         setState(() {
           _modelState = _UploadState.idle;
@@ -177,8 +181,10 @@ class _UploadScreenState extends State<UploadScreen>
       _labelsStatus = 'Selecting labels.txt…';
     });
     try {
-      final result = await FilePicker.platform
-          .pickFiles(type: FileType.any, dialogTitle: 'Select labels.txt');
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        dialogTitle: 'Select labels.txt',
+      );
       if (result == null || result.files.isEmpty) {
         setState(() {
           _labelsState = _UploadState.idle;
@@ -223,7 +229,9 @@ class _UploadScreenState extends State<UploadScreen>
     final config = await ConfigManager.loadConfig();
     if (!mounted) return;
     if (config != null && config.bins.isNotEmpty) {
-      Navigator.of(context).pushReplacementNamed('/detect');
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const DetectionScreen()),
+      );
     } else {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => BinSetupScreen(labels: labels)),
@@ -237,19 +245,34 @@ class _UploadScreenState extends State<UploadScreen>
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Remove model files',
-            style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600)),
+        title: Text(
+          'Remove model files',
+          style: GoogleFonts.inter(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         content: Text(
           'This deletes model.tflite and labels.txt from the app storage.',
-          style: GoogleFonts.inter(color: Colors.white60)),
+          style: GoogleFonts.inter(color: Colors.white60),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: GoogleFonts.inter(color: Colors.white54)),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.inter(color: Colors.white54),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Remove', style: GoogleFonts.inter(color: const Color(0xFFFF5252), fontWeight: FontWeight.w600)),
+            child: Text(
+              'Remove',
+              style: GoogleFonts.inter(
+                color: const Color(0xFFFF5252),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -314,8 +337,10 @@ class _UploadScreenState extends State<UploadScreen>
               children: [
                 // ── Header ───────────────────────────────────────────────────
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 32,
+                  ),
                   child: Column(
                     children: [
                       Container(
@@ -325,20 +350,30 @@ class _UploadScreenState extends State<UploadScreen>
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white10),
                         ),
-                        child: const Icon(Icons.recycling, color: _accentGreen, size: 36),
+                        child: const Icon(
+                          Icons.recycling,
+                          color: _accentGreen,
+                          size: 36,
+                        ),
                       ),
                       const SizedBox(height: 16),
-                      Text('Model Setup',
-                          style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontSize: 28,
-                              letterSpacing: -0.5,
-                              fontWeight: FontWeight.w700)),
+                      Text(
+                        'Model Setup',
+                        style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontSize: 28,
+                          letterSpacing: -0.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                       const SizedBox(height: 8),
-                      Text('Upload your Teachable Machine export',
-                          style: GoogleFonts.inter(
-                              color: Colors.white54,
-                              fontSize: 14)),
+                      Text(
+                        'Upload your Teachable Machine export',
+                        style: GoogleFonts.inter(
+                          color: Colors.white54,
+                          fontSize: 14,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -365,7 +400,9 @@ class _UploadScreenState extends State<UploadScreen>
                       labelColor: Colors.white,
                       unselectedLabelColor: Colors.white38,
                       labelStyle: GoogleFonts.inter(
-                          fontWeight: FontWeight.w600, fontSize: 13),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
                       dividerColor: Colors.transparent,
                       tabs: const [
                         Tab(text: 'ZIP Archive'),
@@ -380,10 +417,7 @@ class _UploadScreenState extends State<UploadScreen>
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,
-                    children: [
-                      _buildZipTab(),
-                      _buildSeparateTab(),
-                    ],
+                    children: [_buildZipTab(), _buildSeparateTab()],
                   ),
                 ),
 
@@ -400,9 +434,12 @@ class _UploadScreenState extends State<UploadScreen>
                           child: Text(
                             'Remove and start over',
                             style: GoogleFonts.inter(
-                                color: const Color(0xFFFF5252).withValues(alpha: 0.8),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500),
+                              color: const Color(
+                                0xFFFF5252,
+                              ).withValues(alpha: 0.8),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ],
@@ -434,14 +471,21 @@ class _UploadScreenState extends State<UploadScreen>
                         color: _accentGreen.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(Icons.info_outline, color: _accentGreen, size: 20),
+                      child: const Icon(
+                        Icons.info_outline,
+                        color: _accentGreen,
+                        size: 20,
+                      ),
                     ),
                     const SizedBox(width: 12),
-                    Text('Instructions',
-                        style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15)),
+                    Text(
+                      'Instructions',
+                      style: GoogleFonts.inter(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -478,7 +522,9 @@ class _UploadScreenState extends State<UploadScreen>
             icon: Icons.memory_rounded,
             state: _modelState,
             statusMessage: _modelStatus,
-            onTap: _modelState == _UploadState.loading ? null : _uploadModelFile,
+            onTap: _modelState == _UploadState.loading
+                ? null
+                : _uploadModelFile,
           ),
           const SizedBox(height: 16),
           _UploadDropzone(
@@ -487,16 +533,19 @@ class _UploadScreenState extends State<UploadScreen>
             icon: Icons.label_rounded,
             state: _labelsState,
             statusMessage: _labelsStatus,
-            onTap: _labelsState == _UploadState.loading ? null : _uploadLabelsFile,
+            onTap: _labelsState == _UploadState.loading
+                ? null
+                : _uploadLabelsFile,
           ),
           const SizedBox(height: 24),
           if (!bothReady)
             Text(
               'Both files are required to proceed.',
               style: GoogleFonts.inter(
-                  color: Colors.white38,
-                  fontSize: 13,
-                  height: 1.5),
+                color: Colors.white38,
+                fontSize: 13,
+                height: 1.5,
+              ),
               textAlign: TextAlign.center,
             ),
         ],
@@ -505,24 +554,27 @@ class _UploadScreenState extends State<UploadScreen>
   }
 
   Widget _infoLine(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.only(top: 4, right: 12),
-              child: Icon(Icons.circle, color: Colors.white24, size: 6),
-            ),
-            Expanded(
-              child: Text(text,
-                  style: GoogleFonts.inter(
-                      color: Colors.white70,
-                      fontSize: 13,
-                      height: 1.4)),
-            ),
-          ],
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 4, right: 12),
+          child: Icon(Icons.circle, color: Colors.white24, size: 6),
         ),
-      );
+        Expanded(
+          child: Text(
+            text,
+            style: GoogleFonts.inter(
+              color: Colors.white70,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildContinueButton() {
     return Container(
@@ -565,7 +617,11 @@ class _UploadScreenState extends State<UploadScreen>
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Icon(Icons.arrow_forward_rounded, color: Colors.black87, size: 20),
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  color: Colors.black87,
+                  size: 20,
+                ),
               ],
             ),
           ),
@@ -580,9 +636,7 @@ class _UploadScreenState extends State<UploadScreen>
 class _GlassCard extends StatelessWidget {
   final Widget child;
 
-  const _GlassCard({
-    required this.child,
-  });
+  const _GlassCard({required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -630,14 +684,14 @@ class _UploadDropzone extends StatelessWidget {
     final borderColor = isSuccess
         ? const Color(0xFF00E676).withValues(alpha: 0.5)
         : isError
-            ? const Color(0xFFFF5252).withValues(alpha: 0.5)
-            : Colors.white10;
+        ? const Color(0xFFFF5252).withValues(alpha: 0.5)
+        : Colors.white10;
 
     final bgColor = isSuccess
         ? const Color(0xFF00E676).withValues(alpha: 0.05)
         : isError
-            ? const Color(0xFFFF5252).withValues(alpha: 0.05)
-            : Colors.white.withValues(alpha: 0.03);
+        ? const Color(0xFFFF5252).withValues(alpha: 0.05)
+        : Colors.white.withValues(alpha: 0.03);
 
     return GestureDetector(
       onTap: onTap,
@@ -665,8 +719,8 @@ class _UploadDropzone extends StatelessWidget {
                         color: isSuccess
                             ? const Color(0xFF00E676).withValues(alpha: 0.1)
                             : isError
-                                ? const Color(0xFFFF5252).withValues(alpha: 0.1)
-                                : Colors.white.withValues(alpha: 0.05),
+                            ? const Color(0xFFFF5252).withValues(alpha: 0.1)
+                            : Colors.white.withValues(alpha: 0.05),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: borderColor),
                       ),
@@ -674,15 +728,17 @@ class _UploadDropzone extends StatelessWidget {
                           ? const Padding(
                               padding: EdgeInsets.all(14),
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
                             )
                           : Icon(
                               isSuccess ? Icons.check_rounded : icon,
                               color: isSuccess
                                   ? const Color(0xFF00E676)
                                   : isError
-                                      ? const Color(0xFFFF5252)
-                                      : Colors.white70,
+                                  ? const Color(0xFFFF5252)
+                                  : Colors.white70,
                               size: 24,
                             ),
                     ),
@@ -691,32 +747,43 @@ class _UploadDropzone extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(title,
-                              style: GoogleFonts.inter(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16)),
+                          Text(
+                            title,
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
                           const SizedBox(height: 2),
-                          Text(subtitle,
-                              style: GoogleFonts.inter(
-                                  color: Colors.white54,
-                                  fontSize: 12)),
+                          Text(
+                            subtitle,
+                            style: GoogleFonts.inter(
+                              color: Colors.white54,
+                              fontSize: 12,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                     if (!isSuccess && !isLoading)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Text('Browse',
-                            style: GoogleFonts.inter(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600)),
+                        child: Text(
+                          'Browse',
+                          style: GoogleFonts.inter(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -724,7 +791,10 @@ class _UploadDropzone extends StatelessWidget {
                   const SizedBox(height: 16),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black26,
                       borderRadius: BorderRadius.circular(10),
@@ -733,16 +803,23 @@ class _UploadDropzone extends StatelessWidget {
                       children: [
                         Icon(
                           isError ? Icons.error_outline : Icons.info_outline,
-                          color: isError ? const Color(0xFFFF5252) : Colors.white54,
+                          color: isError
+                              ? const Color(0xFFFF5252)
+                              : Colors.white54,
                           size: 14,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(statusMessage,
-                              style: GoogleFonts.inter(
-                                  color: isError ? const Color(0xFFFF5252) : Colors.white70,
-                                  fontSize: 12,
-                                  height: 1.4)),
+                          child: Text(
+                            statusMessage,
+                            style: GoogleFonts.inter(
+                              color: isError
+                                  ? const Color(0xFFFF5252)
+                                  : Colors.white70,
+                              fontSize: 12,
+                              height: 1.4,
+                            ),
+                          ),
                         ),
                       ],
                     ),

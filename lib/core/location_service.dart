@@ -50,7 +50,7 @@ class LocationService {
     return permission == LocationPermission.always;
   }
 
-  /// Gets the current location. 
+  /// Gets the current location.
   /// Tries getting accuracy. Defaults to high (GPS), falls back if unavailable.
   static Future<LocationResult?> getCurrentLocation() async {
     final hasPermission = await requestForegroundPermission();
@@ -59,9 +59,10 @@ class LocationService {
     try {
       // First try GPS/High accuracy
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 5),
-      );
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      ).timeout(const Duration(seconds: 5));
       return LocationResult(
         latitude: position.latitude,
         longitude: position.longitude,
@@ -71,9 +72,10 @@ class LocationService {
       // Fallback to coarse/medium accuracy (Network/GSM)
       try {
         Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
-          timeLimit: const Duration(seconds: 5),
-        );
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+          ),
+        ).timeout(const Duration(seconds: 5));
         return LocationResult(
           latitude: position.latitude,
           longitude: position.longitude,

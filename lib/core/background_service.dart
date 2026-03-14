@@ -52,12 +52,13 @@ void onStart(ServiceInstance service) async {
   // We set a periodic timer for every 2 minutes
   Timer.periodic(const Duration(minutes: 2), (timer) async {
     final prefs = await SharedPreferences.getInstance();
-    final isTracking = prefs.getBool(AppConstants.prefLocationTrackingEnabled) ?? false;
+    final isTracking =
+        prefs.getBool(AppConstants.prefLocationTrackingEnabled) ?? false;
 
     if (isTracking) {
-      print('Background Service: Tracking is ON. Fetching location...');
+      debugPrint('Background Service: Tracking is ON. Fetching location...');
       final loc = await LocationService.getCurrentLocation();
-      
+
       if (loc != null) {
         final log = LocationLog(
           latitude: loc.latitude,
@@ -70,15 +71,19 @@ void onStart(ServiceInstance service) async {
           await Supabase.instance.client
               .from(AppConstants.tableLocationLogs)
               .insert(log.toJson());
-          print('Background Service: Successfully inserted location info.');
+          debugPrint(
+            'Background Service: Successfully inserted location info.',
+          );
         } catch (e) {
-          print('Background Service: Failed to insert location log: $e');
+          debugPrint('Background Service: Failed to insert location log: $e');
         }
       } else {
-        print('Background Service: Location disabled or permissions missing.');
+        debugPrint(
+          'Background Service: Location disabled or permissions missing.',
+        );
       }
     } else {
-      print('Background Service: Tracking is OFF.');
+      debugPrint('Background Service: Tracking is OFF.');
     }
   });
 }
@@ -94,7 +99,7 @@ Future<String?> _getDeviceId() async {
       return info.identifierForVendor;
     }
   } catch (e) {
-    print('Failed to get device info: $e');
+    debugPrint('Failed to get device info: $e');
   }
   return null;
 }

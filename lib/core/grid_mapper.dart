@@ -50,12 +50,12 @@ class GridPosition {
 
   /// Serialises to JSON for ESP32 transmission.
   Map<String, dynamic> toJson() => {
-        'grid_x': gridX,
-        'grid_y': gridY,
-        'pixel_x': pixelX,
-        'pixel_y': pixelY,
-        'action': action,
-      };
+    'grid_x': gridX,
+    'grid_y': gridY,
+    'pixel_x': pixelX,
+    'pixel_y': pixelY,
+    'action': action,
+  };
 
   @override
   String toString() => 'GridPosition$label';
@@ -103,10 +103,7 @@ class GridMapper {
     required double xMax,
     required double yMax,
   }) {
-    return (
-      x: (xMin + xMax) / 2,
-      y: (yMin + yMax) / 2,
-    );
+    return (x: (xMin + xMax) / 2, y: (yMin + yMax) / 2);
   }
 
   /// Converts pixel coordinates (top-left origin) to center-based Cartesian
@@ -118,10 +115,7 @@ class GridMapper {
     double pixelX,
     double pixelY,
   ) {
-    return (
-      x: pixelX - frameCenterX,
-      y: frameCenterY - pixelY,
-    );
+    return (x: pixelX - frameCenterX, y: frameCenterY - pixelY);
   }
 
   /// Determines the grid cell for a set of center-based coordinates.
@@ -141,12 +135,17 @@ class GridMapper {
   ///
   /// Takes bounding box coordinates directly from the detection model and
   /// returns a fully populated [GridPosition].
+  ///
+  /// [frameWidth] and [frameHeight] should match the actual camera frame
+  /// dimensions. Defaults to 640×640 if not provided.
   static GridPosition fromBoundingBox({
     required double xMin,
     required double yMin,
     required double xMax,
     required double yMax,
     String action = 'pick',
+    int frameWidth = imageWidth,
+    int frameHeight = imageHeight,
   }) {
     final center = calculateObjectCenter(
       xMin: xMin,
@@ -158,6 +157,8 @@ class GridMapper {
       pixelX: center.x,
       pixelY: center.y,
       action: action,
+      frameWidth: frameWidth,
+      frameHeight: frameHeight,
     );
   }
 
@@ -165,21 +166,28 @@ class GridMapper {
   ///
   /// Use this when you already have the object center pixel (e.g. from the
   /// existing detection pipeline which computes `cx`, `cy`).
+  ///
+  /// [frameWidth] and [frameHeight] should match the actual camera frame
+  /// dimensions. Defaults to 640×640 if not provided.
   static GridPosition fromPixel({
     required double pixelX,
     required double pixelY,
     String action = 'pick',
+    int frameWidth = imageWidth,
+    int frameHeight = imageHeight,
   }) {
-    final centered = convertToCenterCoordinates(pixelX, pixelY);
-    final grid = computeGridCell(centered.x, centered.y);
+    final double centerX = pixelX - frameWidth / 2;
+    final double centerY = frameHeight / 2 - pixelY;
+    final int gridX = (centerX / (frameWidth / gridColumns)).floor();
+    final int gridY = (centerY / (frameHeight / gridRows)).floor();
 
     return GridPosition(
-      gridX: grid.gridX,
-      gridY: grid.gridY,
+      gridX: gridX,
+      gridY: gridY,
       pixelX: pixelX.round(),
       pixelY: pixelY.round(),
-      centerX: centered.x,
-      centerY: centered.y,
+      centerX: centerX,
+      centerY: centerY,
       action: action,
     );
   }

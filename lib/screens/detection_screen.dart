@@ -86,9 +86,9 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ── Design tokens ────────────────────────────────────────────────────────
   static const Color _accentGreen = Color(0xFF00E676);
   static const Color _accentAmber = Color(0xFFFFD740);
-  static const Color _accentRed   = Color(0xFFFF5252);
-  static const Color _accentCyan  = Color(0xFF00B0FF);
-  static const Color _panelBg     = Color(0xE6121212); // 90% opaque dark
+  static const Color _accentRed = Color(0xFFFF5252);
+  static const Color _accentCyan = Color(0xFF00B0FF);
+  static const Color _panelBg = Color(0xE6121212); // 90% opaque dark
 
   @override
   void initState() {
@@ -201,7 +201,11 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── Inference ───────────────────────────────────────────────────────────
 
   void _onCameraFrame(CameraImage image) {
-    if (_isProcessing || !_modelReady || _interpreter == null || _config == null) return;
+    if (_isProcessing ||
+        !_modelReady ||
+        _interpreter == null ||
+        _config == null)
+      return;
     _isProcessing = true;
     _runInference(image);
   }
@@ -211,9 +215,9 @@ class _DetectionScreenState extends State<DetectionScreen>
       final numClasses = _labels.length;
 
       // ── Step 1: Preprocess full frame ──────────────────────────────────
-      final inputFlat  = ImageProcessor.processImage(image);
+      final inputFlat = ImageProcessor.processImage(image);
       final inputBytes = inputFlat.buffer.asUint8List();
-      
+
       // ── Step 2: Run TFLite Inference ───────────────────────────────────
       final outputBuffer = List<double>.filled(numClasses, 0.0);
       final output = [outputBuffer];
@@ -221,17 +225,23 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       final probs = output[0];
       double maxP = 0.0;
-      int    maxI = 0;
+      int maxI = 0;
       for (int i = 0; i < probs.length; i++) {
-        if (probs[i] > maxP) { maxP = probs[i]; maxI = i; }
+        if (probs[i] > maxP) {
+          maxP = probs[i];
+          maxI = i;
+        }
       }
       final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
 
       // ── Step 3: Process Results ────────────────────────────────────────
       _processResult(
-        label, maxP,
-        image.width ~/ 2, image.height ~/ 2, // Default to center for full frame
-        image.width, image.height,
+        label,
+        maxP,
+        image.width ~/ 2,
+        image.height ~/ 2, // Default to center for full frame
+        image.width,
+        image.height,
       );
     } catch (e) {
       debugPrint('Inference error: $e');
@@ -245,8 +255,12 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// [cx], [cy]  — pixel centre of the detected object.
   /// [fw], [fh]  — frame dimensions.
   void _processResult(
-    String label, double confidence,
-    int cx, int cy, int fw, int fh,
+    String label,
+    double confidence,
+    int cx,
+    int cy,
+    int fw,
+    int fh,
   ) {
     if (!mounted) return;
     final config = _config!;
@@ -255,8 +269,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     if (confidence < config.confidenceThreshold) {
       if (_state != DetectionState.waiting) {
         setState(() {
-          _state           = DetectionState.waiting;
-          _activePosition  = null;
+          _state = DetectionState.waiting;
+          _activePosition = null;
           _wasteLocation = WasteLocation.unknown;
         });
       }
@@ -264,13 +278,14 @@ class _DetectionScreenState extends State<DetectionScreen>
     }
 
     // Nothing label → waiting.
-    final isNothing = config.nothingLabels
-        .any((n) => n.toLowerCase() == label.toLowerCase());
+    final isNothing = config.nothingLabels.any(
+      (n) => n.toLowerCase() == label.toLowerCase(),
+    );
     if (isNothing) {
       if (_state != DetectionState.waiting) {
         setState(() {
-          _state           = DetectionState.waiting;
-          _activePosition  = null;
+          _state = DetectionState.waiting;
+          _activePosition = null;
           _wasteLocation = WasteLocation.unknown;
         });
       }
@@ -290,6 +305,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     final gridPos = GridMapper.fromPixel(
       pixelX: cx.toDouble(),
       pixelY: cy.toDouble(),
+      frameWidth: fw,
+      frameHeight: fh,
     );
 
     // ── Robot navigation (WasteLocator) ──────────────────────────────────
@@ -304,25 +321,31 @@ class _DetectionScreenState extends State<DetectionScreen>
     );
 
     setState(() {
-      _detectedLabel   = label;
-      _confidence      = confidence;
-      _activePosition  = gridPos;
-      _wasteLocation   = location;
+      _detectedLabel = label;
+      _confidence = confidence;
+      _activePosition = gridPos;
+      _wasteLocation = location;
 
       if (matchedBin != null) {
-        _state       = DetectionState.detected;
+        _state = DetectionState.detected;
         _detectedBin = matchedBin;
         _transmitToEsp32(label, matchedBin, confidence, location, gridPos);
       } else {
-        _state       = DetectionState.unmapped;
+        _state = DetectionState.unmapped;
         _detectedBin = null;
       }
     });
   }
 
-  void _transmitToEsp32(String label, BinCategory bin, double confidence, WasteLocation location, GridPosition gridPos) {
+  void _transmitToEsp32(
+    String label,
+    BinCategory bin,
+    double confidence,
+    WasteLocation location,
+    GridPosition gridPos,
+  ) {
     if (!Esp32Service().isConnected) return;
-    
+
     // Throttle transmissions to once per second so we don't spam the ESP32
     final now = DateTime.now();
     if (_lastEspTransmission != null &&
@@ -359,8 +382,13 @@ class _DetectionScreenState extends State<DetectionScreen>
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Change Model',
-            style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600)),
+        title: Text(
+          'Change Model',
+          style: GoogleFonts.inter(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         content: Text(
           'This will clear your model and all bin settings. Continue?',
           style: GoogleFonts.inter(color: Colors.white60),
@@ -368,12 +396,20 @@ class _DetectionScreenState extends State<DetectionScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: GoogleFonts.inter(color: Colors.white54)),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.inter(color: Colors.white54),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Clear & Change',
-                style: GoogleFonts.inter(color: _accentRed, fontWeight: FontWeight.w600)),
+            child: Text(
+              'Clear & Change',
+              style: GoogleFonts.inter(
+                color: _accentRed,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -382,10 +418,10 @@ class _DetectionScreenState extends State<DetectionScreen>
       await ModelManager.deleteModelFiles();
       await ConfigManager.clearAll();
       if (!mounted) return;
-      
+
       // Allow portrait mode for UploadScreen.
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-      
+
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const UploadScreen()),
         (_) => false,
@@ -397,22 +433,22 @@ class _DetectionScreenState extends State<DetectionScreen>
     await _cameraController?.stopImageStream();
     final labels = await ConfigManager.loadLabels();
     if (!mounted) return;
-    
+
     // Switch to portrait mode explicitly for the BinSetupScreen.
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    
+
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => BinSetupScreen(labels: labels, existingConfig: _config),
       ),
     );
-    
+
     // Restore landscape mode when returning to the camera.
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    
+
     await _loadConfig();
     _cameraController?.startImageStream(_onCameraFrame);
   }
@@ -433,10 +469,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: _buildBody(),
-    );
+    return Scaffold(backgroundColor: Colors.black, body: _buildBody());
   }
 
   Widget _buildBody() {
@@ -503,10 +536,10 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// Returns the accent colour for the current detection state.
   Color _stateAccent() {
     return switch (_state) {
-      DetectionState.detected  => _detectedBin != null
-          ? Color(_detectedBin!.colorHex) : _accentGreen,
-      DetectionState.unmapped  => _accentAmber,
-      DetectionState.waiting   => Colors.white38,
+      DetectionState.detected =>
+        _detectedBin != null ? Color(_detectedBin!.colorHex) : _accentGreen,
+      DetectionState.unmapped => _accentAmber,
+      DetectionState.waiting => Colors.white38,
     };
   }
 
@@ -519,8 +552,10 @@ class _DetectionScreenState extends State<DetectionScreen>
         children: [
           const CircularProgressIndicator(color: _accentGreen, strokeWidth: 2),
           const SizedBox(height: 20),
-          Text('Initialising camera…',
-              style: GoogleFonts.inter(color: Colors.white54, fontSize: 14)),
+          Text(
+            'Initialising camera…',
+            style: GoogleFonts.inter(color: Colors.white54, fontSize: 14),
+          ),
         ],
       ),
     );
@@ -533,11 +568,17 @@ class _DetectionScreenState extends State<DetectionScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.videocam_off_outlined, size: 56, color: _accentRed.withValues(alpha: 0.8)),
+            Icon(
+              Icons.videocam_off_outlined,
+              size: 56,
+              color: _accentRed.withValues(alpha: 0.8),
+            ),
             const SizedBox(height: 16),
-            Text(_cameraError!,
-                style: GoogleFonts.inter(color: Colors.white60, fontSize: 14),
-                textAlign: TextAlign.center),
+            Text(
+              _cameraError!,
+              style: GoogleFonts.inter(color: Colors.white60, fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),
@@ -573,7 +614,7 @@ class _DetectionScreenState extends State<DetectionScreen>
             ),
             const SizedBox(width: 8),
           ],
-          
+
           // Dot indicator
           AnimatedBuilder(
             animation: _pulseAnim,
@@ -608,7 +649,11 @@ class _DetectionScreenState extends State<DetectionScreen>
     return Row(
       children: [
         if (Esp32Service().isConnected) ...[
-          _iconBtn(Icons.flash_on_rounded, () => Esp32Service().sendTrigger(), label: 'Trigger'),
+          _iconBtn(
+            Icons.flash_on_rounded,
+            () => Esp32Service().sendTrigger(),
+            label: 'Trigger',
+          ),
           const SizedBox(width: 8),
         ],
         _iconBtn(Icons.tune_rounded, _openSettings, label: 'Bin Setup'),
@@ -710,11 +755,18 @@ class _DetectionScreenState extends State<DetectionScreen>
                     width: 12,
                     height: 12,
                     child: CircularProgressIndicator(
-                      color: Colors.white24, strokeWidth: 1.5),
+                      color: Colors.white24,
+                      strokeWidth: 1.5,
+                    ),
                   ),
                   const SizedBox(width: 6),
-                  Text('Loading model',
-                      style: GoogleFonts.inter(color: Colors.white24, fontSize: 11)),
+                  Text(
+                    'Loading model',
+                    style: GoogleFonts.inter(
+                      color: Colors.white24,
+                      fontSize: 11,
+                    ),
+                  ),
                 ],
               ),
           ],
@@ -735,7 +787,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// Panel content when waste has been detected (mapped or unmapped).
   Widget _buildDetectionContent(Color accent) {
     final gridPos = _activePosition;
-    final cmd  = _wasteLocation.robotCommand;
+    final cmd = _wasteLocation.robotCommand;
     final dist = _wasteLocation.estimatedDistanceCm;
 
     return Column(
@@ -791,7 +843,10 @@ class _DetectionScreenState extends State<DetectionScreen>
             // Grid coordinate badge (Cartesian)
             if (gridPos != null)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
@@ -905,7 +960,9 @@ class _DetectionScreenState extends State<DetectionScreen>
     // Colour for command: red=stop, amber=turn, green=straight.
     final cmdColor = cmd.startsWith('STOP')
         ? _accentRed
-        : cmd.contains('TURN') ? _accentAmber : _accentGreen;
+        : cmd.contains('TURN')
+        ? _accentAmber
+        : _accentGreen;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -923,10 +980,7 @@ class _DetectionScreenState extends State<DetectionScreen>
           const SizedBox(height: 2),
           Text(
             '~${dist.toStringAsFixed(0)} cm',
-            style: GoogleFonts.robotoMono(
-              color: Colors.white38,
-              fontSize: 11,
-            ),
+            style: GoogleFonts.robotoMono(color: Colors.white38, fontSize: 11),
           ),
         ],
         // ── Grid & pixel coordinates ─────────────────────────────────────

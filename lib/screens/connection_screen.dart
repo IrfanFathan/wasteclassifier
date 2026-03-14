@@ -2,6 +2,11 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/esp32_service.dart';
+import '../utils/config_manager.dart';
+import '../utils/model_manager.dart';
+import 'upload_screen.dart';
+import 'bin_setup_screen.dart';
+import 'detection_screen.dart';
 
 class ConnectionScreen extends StatefulWidget {
   const ConnectionScreen({super.key});
@@ -21,29 +26,52 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   Future<void> _checkConnection() async {
     setState(() {
       _isChecking = true;
-      _statusMsg = 'Pinging 192.168.1.200...';
+      _statusMsg = 'Pinging ${Esp32Service.esp32Ip}...';
     });
-    
+
     final success = await Esp32Service().checkConnection();
-    
+
     if (!mounted) return;
     setState(() {
       _isChecking = false;
       _isConnected = success;
-      _statusMsg = success 
-          ? 'ESP32 Connected' 
-          : 'ESP32 Not Connected';
+      _statusMsg = success ? 'ESP32 Connected' : 'ESP32 Not Connected';
     });
 
     if (success) {
       await Future.delayed(const Duration(milliseconds: 1000));
       if (!mounted) return;
-      _proceedToApp();
+      await _proceedToApp();
     }
   }
 
-  void _proceedToApp() {
-    Navigator.of(context).pushReplacementNamed('/upload');
+  Future<void> _proceedToApp() async {
+    final modelLoaded = await ConfigManager.isModelLoaded();
+    if (!modelLoaded) {
+      final filesExist = await ModelManager.modelFilesExist();
+      if (!filesExist) {
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const UploadScreen()),
+        );
+        return;
+      }
+    }
+
+    final labels = await ConfigManager.loadLabels();
+    final config = await ConfigManager.loadConfig();
+
+    if (!mounted) return;
+
+    if (config == null || config.bins.isEmpty) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => BinSetupScreen(labels: labels)),
+      );
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const DetectionScreen()),
+      );
+    }
   }
 
   @override
@@ -99,12 +127,16 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                         border: Border.all(color: Colors.white10),
                       ),
                       child: Icon(
-                        _isConnected == true 
-                            ? Icons.wifi_rounded 
-                            : _isConnected == false 
-                                ? Icons.wifi_off_rounded 
-                                : Icons.sensors_rounded, 
-                        color: _isConnected == true ? _accentGreen : (_isConnected == false ? const Color(0xFFFF5252) : _accentCyan),
+                        _isConnected == true
+                            ? Icons.wifi_rounded
+                            : _isConnected == false
+                            ? Icons.wifi_off_rounded
+                            : Icons.sensors_rounded,
+                        color: _isConnected == true
+                            ? _accentGreen
+                            : (_isConnected == false
+                                  ? const Color(0xFFFF5252)
+                                  : _accentCyan),
                         size: 64,
                       ),
                     ),
@@ -112,20 +144,24 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                     Text(
                       'ESP32 Link',
                       style: GoogleFonts.inter(
-                          color: Colors.white,
-                          fontSize: 32,
-                          letterSpacing: -1,
-                          fontWeight: FontWeight.w700),
+                        color: Colors.white,
+                        fontSize: 32,
+                        letterSpacing: -1,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Text(
                       'Connect your phone to the ESP32 Wi-Fi hotspot to transmit detection data to the dashboard.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
-                          color: Colors.white54, fontSize: 14, height: 1.5),
+                        color: Colors.white54,
+                        fontSize: 14,
+                        height: 1.5,
+                      ),
                     ),
                     const SizedBox(height: 32),
-                    
+
                     // Status Card
                     if (_statusMsg.isNotEmpty)
                       Container(
@@ -136,15 +172,15 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                           color: _isConnected == true
                               ? _accentGreen.withValues(alpha: 0.1)
                               : _isConnected == false
-                                  ? const Color(0xFFFF5252).withValues(alpha: 0.1)
-                                  : Colors.white.withValues(alpha: 0.05),
+                              ? const Color(0xFFFF5252).withValues(alpha: 0.1)
+                              : Colors.white.withValues(alpha: 0.05),
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
                             color: _isConnected == true
                                 ? _accentGreen.withValues(alpha: 0.3)
                                 : _isConnected == false
-                                    ? const Color(0xFFFF5252).withValues(alpha: 0.3)
-                                    : Colors.white10,
+                                ? const Color(0xFFFF5252).withValues(alpha: 0.3)
+                                : Colors.white10,
                           ),
                         ),
                         child: Text(
@@ -154,13 +190,13 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                             color: _isConnected == true
                                 ? _accentGreen
                                 : _isConnected == false
-                                    ? const Color(0xFFFF5252)
-                                    : Colors.white70,
+                                ? const Color(0xFFFF5252)
+                                : Colors.white70,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
-                      
+
                     // Actions
                     Container(
                       width: double.infinity,
@@ -172,7 +208,9 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF00E676).withValues(alpha: 0.3),
+                            color: const Color(
+                              0xFF00E676,
+                            ).withValues(alpha: 0.3),
                             blurRadius: 16,
                             offset: const Offset(0, 4),
                           ),
@@ -183,17 +221,27 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.transparent,
                           shadowColor: Colors.transparent,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
                         ),
                         child: _isChecking
-                          ? const SizedBox(
-                              width: 24, height: 24, 
-                              child: CircularProgressIndicator(color: Colors.black87, strokeWidth: 2))
-                          : Text(
-                              'Test Connection',
-                              style: GoogleFonts.inter(
-                                  color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 16),
-                            ),
+                            ? const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  color: Colors.black87,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(
+                                'Test Connection',
+                                style: GoogleFonts.inter(
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -202,14 +250,17 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                       child: Text(
                         'Skip for now (No ESP32)',
                         style: GoogleFonts.inter(
-                            color: Colors.white54, fontSize: 13, fontWeight: FontWeight.w500),
+                          color: Colors.white54,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    )
+                    ),
                   ],
                 ),
               ),
             ),
-          )
+          ),
         ],
       ),
     );

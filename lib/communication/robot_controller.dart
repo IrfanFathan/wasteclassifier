@@ -32,8 +32,8 @@ class RobotController {
       "object_detected": true,
       "coordinates": {
         "x": position.centerX.round(),
-        "y": position.centerY.round()
-      }
+        "y": position.centerY.round(),
+      },
     };
   }
   // ── Transmission ───────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ class RobotController {
     try {
       final response = await http
           .post(
-            Uri.parse('$url/connect'),
+            Uri.parse('$url/data'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(command),
           )
