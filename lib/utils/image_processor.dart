@@ -15,11 +15,7 @@ class ZoneResult {
   final int cx;
   final int cy;
 
-  const ZoneResult({
-    required this.tensor,
-    required this.cx,
-    required this.cy,
-  });
+  const ZoneResult({required this.tensor, required this.cx, required this.cy});
 }
 
 // ─── ImageProcessor ───────────────────────────────────────────────────────
@@ -65,20 +61,18 @@ class ImageProcessor {
       final uPlane = image.planes[1];
       final vPlane = image.planes[2];
 
-      final raw = await _channel.invokeMethod<Float32List>(
-        'preprocess_horizontal_zones',
-        {
-          'y_plane':         yPlane.bytes,
-          'u_plane':         uPlane.bytes,
-          'v_plane':         vPlane.bytes,
-          'y_row_stride':    yPlane.bytesPerRow,
-          'uv_row_stride':   uPlane.bytesPerRow,
-          'uv_pixel_stride': uPlane.bytesPerPixel ?? 1,
-          'width':           image.width,
-          'height':          image.height,
-          'target_size':     inputSize,
-        },
-      );
+      final raw = await _channel
+          .invokeMethod<Float32List>('preprocess_horizontal_zones', {
+            'y_plane': yPlane.bytes,
+            'u_plane': uPlane.bytes,
+            'v_plane': vPlane.bytes,
+            'y_row_stride': yPlane.bytesPerRow,
+            'uv_row_stride': uPlane.bytesPerRow,
+            'uv_pixel_stride': uPlane.bytesPerPixel ?? 1,
+            'width': image.width,
+            'height': image.height,
+            'target_size': inputSize,
+          });
 
       if (raw == null) {
         _nativeReady = false;
@@ -87,20 +81,20 @@ class ImageProcessor {
 
       // The native function returns 3 zones concatenated.
       // Recompute zone centres (identical to the Dart path).
-      final fw     = image.width;
-      final fh     = image.height;
-      final zoneW  = fw ~/ 3;
-      final cy     = fh ~/ 2;
+      final fw = image.width;
+      final fh = image.height;
+      final zoneW = fw ~/ 3;
+      final cy = fh ~/ 2;
       final zoneLen = inputSize * inputSize * 3;
 
       return [
         ZoneResult(
-          tensor: Float32List.sublistView(raw, 0,           zoneLen),
+          tensor: Float32List.sublistView(raw, 0, zoneLen),
           cx: zoneW ~/ 2,
           cy: cy,
         ),
         ZoneResult(
-          tensor: Float32List.sublistView(raw, zoneLen,     zoneLen * 2),
+          tensor: Float32List.sublistView(raw, zoneLen, zoneLen * 2),
           cx: zoneW + zoneW ~/ 2,
           cy: cy,
         ),
@@ -112,7 +106,7 @@ class ImageProcessor {
       ];
     } catch (e) {
       debugPrint('OpenCV native zone scan failed: $e');
-      _nativeReady = false;           // disable for subsequent frames
+      _nativeReady = false; // disable for subsequent frames
       return scanHorizontalZones(image);
     }
   }
@@ -155,8 +149,18 @@ class ImageProcessor {
     final cw = w.clamp(1, fullImage.width - cx);
     final ch = h.clamp(1, fullImage.height - cy);
 
-    final cropped = img.copyCrop(fullImage, x: cx, y: cy, width: cw, height: ch);
-    final resized = img.copyResize(cropped, width: inputSize, height: inputSize);
+    final cropped = img.copyCrop(
+      fullImage,
+      x: cx,
+      y: cy,
+      width: cw,
+      height: ch,
+    );
+    final resized = img.copyResize(
+      cropped,
+      width: inputSize,
+      height: inputSize,
+    );
     return _normalizeImage(resized);
   }
 
@@ -220,17 +224,15 @@ class ImageProcessor {
     for (int y = 0; y < height; y++) {
       for (int x = 0; x < width; x++) {
         final int yIndex = y * yRowStride + x;
-        final int uvIndex =
-            (y ~/ 2) * uvRowStride + (x ~/ 2) * uvPixelStride;
+        final int uvIndex = (y ~/ 2) * uvRowStride + (x ~/ 2) * uvPixelStride;
 
         final int yValue = yBytes[yIndex] & 0xFF;
         final int uValue = uBytes[uvIndex] & 0xFF;
         final int vValue = vBytes[uvIndex] & 0xFF;
 
         int r = (yValue + 1.402 * (vValue - 128)).round();
-        int g =
-            (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128))
-                .round();
+        int g = (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128))
+            .round();
         int b = (yValue + 1.772 * (uValue - 128)).round();
 
         r = r.clamp(0, 255);
@@ -245,8 +247,7 @@ class ImageProcessor {
   }
 
   static Float32List _normalizeImage(img.Image image) {
-    final Float32List result =
-        Float32List(1 * inputSize * inputSize * 3);
+    final Float32List result = Float32List(1 * inputSize * inputSize * 3);
     int index = 0;
     for (int y = 0; y < inputSize; y++) {
       for (int x = 0; x < inputSize; x++) {

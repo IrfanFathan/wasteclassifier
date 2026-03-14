@@ -216,7 +216,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     // Throttle: skip frames that arrive within the cooldown window.
     final now = DateTime.now();
     if (_lastFrameProcessed != null &&
-        now.difference(_lastFrameProcessed!).inMilliseconds < _frameThrottleMs) {
+        now.difference(_lastFrameProcessed!).inMilliseconds <
+            _frameThrottleMs) {
       return;
     }
     _lastFrameProcessed = now;
@@ -270,9 +271,17 @@ class _DetectionScreenState extends State<DetectionScreen>
       }
 
       // ── Step 3: Process Results ────────────────────────────────────────
-      final label =
-          bestLabelIdx < _labels.length ? _labels[bestLabelIdx] : 'Unknown';
-      _processResult(label, bestConf, bestCx, bestCy, image.width, image.height);
+      final label = bestLabelIdx < _labels.length
+          ? _labels[bestLabelIdx]
+          : 'Unknown';
+      _processResult(
+        label,
+        bestConf,
+        bestCx,
+        bestCy,
+        image.width,
+        image.height,
+      );
     } catch (e) {
       debugPrint('Inference error: $e');
     } finally {
