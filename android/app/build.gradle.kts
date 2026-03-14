@@ -1,3 +1,6 @@
+import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -7,9 +10,13 @@ plugins {
 
 // Read optional opencv.sdk.path from local.properties so the developer
 // can configure the OpenCV Android SDK path without touching this file.
-val localProperties = java.util.Properties().also { props ->
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use(props::load)
+val localProperties = Properties().also { props ->
+    val propertiesFile = rootProject.file("local.properties")
+    if (propertiesFile.exists()) {
+        propertiesFile.inputStream().use { input ->
+            props.load(input)
+        }
+    }
 }
 val opencvSdkPath: String =
     localProperties.getProperty("opencv.sdk.path")
@@ -25,8 +32,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 
     defaultConfig {
@@ -55,7 +64,7 @@ android {
 
     // Required for TFLite: prevent native .so files from being compressed
     // so the runtime linker can load them directly from the APK.
-    aaptOptions {
+    androidResources {
         noCompress += "tflite"
     }
 

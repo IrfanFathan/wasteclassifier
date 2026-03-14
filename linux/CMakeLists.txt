@@ -1,5 +1,19 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.13)
+
+# VS Code and shell startup files can export CXX=clang++ even when clang is not
+# installed. CMake reads that before enabling the C++ language, so correct it
+# here and fall back to an available compiler.
+if(DEFINED ENV{CXX} AND NOT "$ENV{CXX}" STREQUAL "")
+  find_program(RESOLVED_CXX NAMES "$ENV{CXX}")
+  if(NOT RESOLVED_CXX)
+    find_program(FALLBACK_CXX NAMES g++ c++ clang++)
+    if(FALLBACK_CXX)
+      set(ENV{CXX} "${FALLBACK_CXX}")
+    endif()
+  endif()
+endif()
+
 project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
