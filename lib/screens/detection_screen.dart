@@ -79,6 +79,11 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── ESP32 ──────────────────────────────────────────────────────────────
   DateTime? _lastEspTransmission;
 
+  // ─── Frame throttle ──────────────────────────────────────────────────────
+  /// Minimum interval between inference runs.  Skip frames that arrive faster.
+  static const int _frameThrottleMs = 300;
+  DateTime? _lastFrameProcessed;
+
   // ─── Animation ───────────────────────────────────────────────────────────
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
@@ -204,45 +209,70 @@ class _DetectionScreenState extends State<DetectionScreen>
     if (_isProcessing ||
         !_modelReady ||
         _interpreter == null ||
-        _config == null)
+        _config == null) {
       return;
+    }
+
+    // Throttle: skip frames that arrive within the cooldown window.
+    final now = DateTime.now();
+    if (_lastFrameProcessed != null &&
+        now.difference(_lastFrameProcessed!).inMilliseconds < _frameThrottleMs) {
+      return;
+    }
+    _lastFrameProcessed = now;
+
     _isProcessing = true;
     _runInference(image);
   }
 
-  void _runInference(CameraImage image) {
+  Future<void> _runInference(CameraImage image) async {
     try {
       final numClasses = _labels.length;
 
-      // ── Step 1: Preprocess full frame ──────────────────────────────────
-      final inputFlat = ImageProcessor.processImage(image);
-      final inputBytes = inputFlat.buffer.asUint8List();
+      // ── Step 1: Scan 3 horizontal zones (left / centre / right) ───────
+      // Uses OpenCV JNI native path when available (single plane-transfer),
+      // falls back to pure Dart YUV→RGB + crop otherwise.
+      final zones = await ImageProcessor.scanHorizontalZonesAsync(image);
 
-      // ── Step 2: Run TFLite Inference ───────────────────────────────────
+      // ── Step 2: Run TFLite on each zone; keep the highest-confidence ──
       final outputBuffer = List<double>.filled(numClasses, 0.0);
       final output = [outputBuffer];
-      _interpreter!.run(inputBytes, output);
 
-      final probs = output[0];
-      double maxP = 0.0;
-      int maxI = 0;
-      for (int i = 0; i < probs.length; i++) {
-        if (probs[i] > maxP) {
-          maxP = probs[i];
-          maxI = i;
+      double bestConf = 0.0;
+      int bestLabelIdx = 0;
+      int bestCx = image.width ~/ 2;
+      int bestCy = image.height ~/ 2;
+
+      for (final zone in zones) {
+        // Reset output buffer between runs.
+        for (int i = 0; i < numClasses; i++) {
+          outputBuffer[i] = 0.0;
+        }
+
+        final inputBytes = zone.tensor.buffer.asUint8List();
+        _interpreter!.run(inputBytes, output);
+
+        int maxI = 0;
+        double maxP = 0.0;
+        for (int i = 0; i < numClasses; i++) {
+          if (output[0][i] > maxP) {
+            maxP = output[0][i];
+            maxI = i;
+          }
+        }
+
+        if (maxP > bestConf) {
+          bestConf = maxP;
+          bestLabelIdx = maxI;
+          bestCx = zone.cx;
+          bestCy = zone.cy;
         }
       }
-      final label = maxI < _labels.length ? _labels[maxI] : 'Unknown';
 
       // ── Step 3: Process Results ────────────────────────────────────────
-      _processResult(
-        label,
-        maxP,
-        image.width ~/ 2,
-        image.height ~/ 2, // Default to center for full frame
-        image.width,
-        image.height,
-      );
+      final label =
+          bestLabelIdx < _labels.length ? _labels[bestLabelIdx] : 'Unknown';
+      _processResult(label, bestConf, bestCx, bestCy, image.width, image.height);
     } catch (e) {
       debugPrint('Inference error: $e');
     } finally {
@@ -482,7 +512,10 @@ class _DetectionScreenState extends State<DetectionScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // ── 1. Full-screen camera preview ───────────────────────────────
+        // ── 1. Full-screen camera preview + grid (bounded to preview area) ──
+        // Grid8x8Overlay is stacked INSIDE the AspectRatio so it is
+        // constrained to the exact camera preview rectangle and never
+        // bleeds into the black letterbox bars around it.
         Positioned.fill(
           child: Container(
             color: Colors.black,
@@ -492,35 +525,36 @@ class _DetectionScreenState extends State<DetectionScreen>
               // On Android this is ~0.75 in portrait, giving the correct 3:4
               // portrait representation of a 4:3 sensor.
               aspectRatio: _cameraController!.value.aspectRatio,
-              child: CameraPreview(_cameraController!),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CameraPreview(_cameraController!),
+                  Grid8x8Overlay(
+                    activePosition: _activePosition,
+                    accentColor: accent,
+                    pulseAnimation: _pulseAnim,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
 
-        // ── 2. 8×8 Center-origin Grid overlay ────────────────────────────
-        Positioned.fill(
-          child: Grid8x8Overlay(
-            activePosition: _activePosition,
-            accentColor: accent,
-            pulseAnimation: _pulseAnim,
-          ),
-        ),
-
-        // ── 3. Status badge (top-left) ──────────────────────────────────
+        // ── 2. Status badge (top-left) ──────────────────────────────────
         Positioned(
           top: MediaQuery.of(context).padding.top + 12,
           left: 16,
           child: _buildStatusBadge(accent),
         ),
 
-        // ── 4. Action buttons (top-right) ───────────────────────────────
+        // ── 3. Action buttons (top-right) ───────────────────────────────
         Positioned(
           top: MediaQuery.of(context).padding.top + 16,
           right: MediaQuery.of(context).padding.right + 16,
           child: _buildActionButtons(),
         ),
 
-        // ── 5. Bottom result panel ──────────────────────────────────────
+        // ── 4. Bottom result panel ──────────────────────────────────────
         Positioned(
           bottom: 0,
           left: 0,
