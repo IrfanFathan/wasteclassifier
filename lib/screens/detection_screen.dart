@@ -1,12 +1,16 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../core/grid_mapper.dart';
 import '../communication/robot_controller.dart';
+import '../features/detection/detection_repository.dart';
 import '../models/app_config.dart';
 import '../models/bin_category.dart';
 import '../models/calibration_config.dart';
@@ -16,6 +20,7 @@ import '../utils/image_processor.dart';
 import '../utils/model_manager.dart';
 import '../utils/waste_locator.dart';
 import '../services/esp32_service.dart';
+import '../shared/constants.dart';
 import 'bin_setup_screen.dart';
 import 'upload_screen.dart';
 
@@ -23,6 +28,9 @@ import 'upload_screen.dart';
 
 /// Represents the three possible detection outcomes.
 enum DetectionState { waiting, detected, unmapped }
+
+/// GPS fix quality for the status badge.
+enum GpsStatus { fix, lowAccuracy, noFix }
 
 // ─── Grid Coordinate ──────────────────────────────────────────────────────
 // Now uses GridPosition from lib/core/grid_mapper.dart
@@ -84,6 +92,20 @@ class _DetectionScreenState extends State<DetectionScreen>
   static const int _frameThrottleMs = 300;
   DateTime? _lastFrameProcessed;
 
+  // ─── WASTO Tracker state ─────────────────────────────────────────────────
+  /// Stores the most recent camera frame for snapshot capture.
+  CameraImage? _lastFrame;
+  /// Prevents flooding Supabase with duplicate detections.
+  DateTime? _lastDetectionSaved;
+  /// Countdown timer that ticks every second.
+  Timer? _pingTimer;
+  /// Seconds remaining until the next location ping fires.
+  int _pingCountdownSec = 120;
+  /// Current GPS fix quality.
+  GpsStatus _gpsStatus = GpsStatus.noFix;
+  /// UUID of this device in Supabase (loaded from SharedPreferences).
+  String? _deviceId;
+
   // ─── Animation ───────────────────────────────────────────────────────────
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
@@ -114,6 +136,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     _pulseAnim = Tween<double>(begin: 0.35, end: 0.85).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+    _loadDeviceId();
+    _startPingCountdown();
     _initialize();
   }
 
@@ -206,6 +230,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── Inference ───────────────────────────────────────────────────────────
 
   void _onCameraFrame(CameraImage image) {
+    _lastFrame = image;
     if (_isProcessing ||
         !_modelReady ||
         _interpreter == null ||
@@ -376,6 +401,11 @@ class _DetectionScreenState extends State<DetectionScreen>
         _detectedBin = null;
       }
     });
+
+    // WASTO Tracker: persist detection to Supabase.
+    if (confidence >= AppConstants.kDetectionConfidenceThreshold) {
+      _maybeSaveDetection(label, confidence, cx, cy, fw, fh);
+    }
   }
 
   void _transmitToEsp32(
@@ -413,6 +443,101 @@ class _DetectionScreenState extends State<DetectionScreen>
     // Also send the structured grid command for robotic arm.
     final command = RobotController.createRobotCommand(gridPos);
     Esp32Service().sendRobotCommand(command);
+  }
+
+  // ─── WASTO Tracker helpers ────────────────────────────────────────────────
+
+  Future<void> _loadDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _deviceId = prefs.getString(AppConstants.prefDeviceId);
+      });
+    }
+  }
+
+  void _startPingCountdown() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(const Duration(seconds: 1), _onSecondTick);
+  }
+
+  void _onSecondTick(Timer _) {
+    if (!mounted) return;
+    setState(() {
+      _pingCountdownSec =
+          _pingCountdownSec > 1 ? _pingCountdownSec - 1 : 120;
+    });
+    _updateGpsStatus();
+  }
+
+  Future<void> _updateGpsStatus() async {
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.low,
+          timeLimit: Duration(seconds: 2),
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _gpsStatus = pos.accuracy < 50
+            ? GpsStatus.fix
+            : pos.accuracy < 200
+                ? GpsStatus.lowAccuracy
+                : GpsStatus.noFix;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _gpsStatus = GpsStatus.noFix);
+    }
+  }
+
+  /// Saves a detection to Supabase when the 5-second cooldown has elapsed.
+  void _maybeSaveDetection(
+    String label,
+    double confidence,
+    int cx,
+    int cy,
+    int fw,
+    int fh,
+  ) {
+    if (_deviceId == null) return;
+    final now = DateTime.now();
+    if (_lastDetectionSaved != null &&
+        now.difference(_lastDetectionSaved!) < AppConstants.kDetectionCooldown) {
+      return;
+    }
+    _lastDetectionSaved = now;
+
+    final frame = _lastFrame;
+    if (frame == null) return;
+
+    // Convert and save asynchronously without blocking the camera stream.
+    Future(() async {
+      try {
+        final rgbImage = ImageProcessor.convertToRgb(frame);
+        await DetectionRepository.saveDetection(
+          deviceId: _deviceId!,
+          rgbFrame: rgbImage,
+          label: label,
+          confidence: confidence,
+          cx: cx,
+          cy: cy,
+          frameWidth: fw,
+          frameHeight: fh,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$label detected — saved to database'),
+              duration: const Duration(seconds: 2),
+              backgroundColor: const Color(0xFF1E1E1E),
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint('_maybeSaveDetection: $e');
+      }
+    });
   }
 
   // ─── Settings ────────────────────────────────────────────────────────────
@@ -497,6 +622,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   @override
   void dispose() {
     _pulseController.dispose();
+    _pingTimer?.cancel();
     _cameraController?.stopImageStream();
     _cameraController?.dispose();
     _interpreter?.close();
@@ -558,6 +684,13 @@ class _DetectionScreenState extends State<DetectionScreen>
           child: _buildStatusBadge(accent),
         ),
 
+        // ── 2b. Ping countdown + GPS badge (top-left, below status) ─────
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 52,
+          left: 16,
+          child: _buildPingGpsBadge(),
+        ),
+
         // ── 3. Action buttons (top-right) ───────────────────────────────
         Positioned(
           top: MediaQuery.of(context).padding.top + 16,
@@ -589,6 +722,50 @@ class _DetectionScreenState extends State<DetectionScreen>
   }
 
   // ─── Widget builders ──────────────────────────────────────────────────────
+
+  Widget _buildPingGpsBadge() {
+    final gpsColor = switch (_gpsStatus) {
+      GpsStatus.fix => _accentGreen,
+      GpsStatus.lowAccuracy => _accentAmber,
+      GpsStatus.noFix => _accentRed,
+    };
+    final mins = _pingCountdownSec ~/ 60;
+    final secs = _pingCountdownSec % 60;
+    final countdownLabel =
+        'Ping ${mins.toString().padLeft(1, '0')}:${secs.toString().padLeft(2, '0')}';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _panelBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // GPS dot
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: gpsColor,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            countdownLabel,
+            style: GoogleFonts.robotoMono(
+              color: Colors.white54,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildLoadingView() {
     return Center(

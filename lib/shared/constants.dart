@@ -1,19 +1,27 @@
 class AppConstants {
-  // Use 10.0.2.2 for Android emulator to access local host, or 0.0.0.0 for actual network
-  // Using 0.0.0.0 as requested.
+  // ── ESP32 / HTTP server (existing feature) ─────────────────────────────
   static const String httpServerHost = '0.0.0.0';
   static const int httpServerPort = 8080;
 
-  // Supabase Table Names
+  // ── Old Supabase table names (kept for ESP32 feature) ──────────────────
   static const String tableWasteDetections = 'waste_detections';
   static const String tableLocationLogs = 'location_logs';
 
-  // Shared Preferences Keys
-  static const String prefLocationTrackingEnabled = 'location_tracking_enabled';
+  // ── WASTO Tracker table names ──────────────────────────────────────────
+  static const String tableDevices = 'devices';
+  static const String tableLocationPings = 'location_pings';
+  static const String tableDetectionEvents = 'detection_events';
+  static const String tableWasteClasses = 'waste_classes';
 
-  // Environment variables (replace with your actual Supabase URL and anon key)
-  // Since environment variables from build/launch can be tricky without flutter_dotenv,
-  // we are defining them here for simplicity. In production, consider --dart-define.
-  static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL', defaultValue: 'https://YOUR_PROJECT_ID.supabase.co');
-  static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY', defaultValue: 'YOUR_ANON_KEY');
+  // ── Supabase Storage ───────────────────────────────────────────────────
+  static const String storageBucketDetections = 'detection-frames';
+
+  // ── WASTO Tracker intervals / thresholds ──────────────────────────────
+  static const Duration kPingInterval = Duration(minutes: 2);
+  static const Duration kDetectionCooldown = Duration(seconds: 5);
+  static const double kDetectionConfidenceThreshold = 0.45;
+
+  // ── Shared Preferences Keys ────────────────────────────────────────────
+  static const String prefLocationTrackingEnabled = 'location_tracking_enabled';
+  static const String prefDeviceId = 'wasto_device_id';
 }

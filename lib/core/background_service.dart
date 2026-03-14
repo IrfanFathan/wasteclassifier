@@ -1,105 +1,101 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'dart:io';
 
+import '../features/location/location_repository.dart';
 import '../shared/constants.dart';
-import '../shared/models/location_log.dart';
-import 'location_service.dart';
 
-class BackgroundService {
-  static Future<void> initializeService() async {
-    final service = FlutterBackgroundService();
+// ─── Task Handler ─────────────────────────────────────────────────────────────
 
-    await service.configure(
-      androidConfiguration: AndroidConfiguration(
-        // this will be executed when app is in foreground or background in separated isolate
-        onStart: onStart,
-        autoStart: false,
-        isForegroundMode: true,
+/// Called by the OS in a separate isolate when the foreground service starts.
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(_WastoTaskHandler());
+}
+
+class _WastoTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    debugPrint('WastoForegroundService: task started at $timestamp');
+    // Re-initialize Supabase because this may run in its own isolate.
+    try {
+      await dotenv.load();
+      await Supabase.initialize(
+        url: dotenv.env['SUPABASE_URL']!,
+        anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+      );
+    } catch (e) {
+      // Already initialized — safe to ignore.
+      debugPrint('WastoForegroundService: Supabase init: $e');
+    }
+  }
+
+  @override
+  Future<void> onRepeatEvent(DateTime timestamp) async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceId = prefs.getString(AppConstants.prefDeviceId);
+    if (deviceId == null) {
+      debugPrint('WastoForegroundService: device_id not set, skipping ping');
+      return;
+    }
+    debugPrint('WastoForegroundService: pinging location for device=$deviceId');
+    await LocationRepository.pingOnce(deviceId);
+  }
+
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {
+    debugPrint('WastoForegroundService: task destroyed');
+  }
+}
+
+// ─── WastoForegroundService ───────────────────────────────────────────────────
+
+class WastoForegroundService {
+  /// Configures the foreground task options.  Call once during app startup
+  /// (before [start]).
+  static void init() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'wasto_location_channel',
+        channelName: 'WASTO Location Tracking',
+        channelDescription: 'Sends a GPS ping every 2 minutes.',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
       ),
-      iosConfiguration: IosConfiguration(
-        // auto start service
-        autoStart: false,
-        onForeground: onStart,
-        onBackground: onIosBackground,
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(
+          AppConstants.kPingInterval.inMilliseconds,
+        ),
+        autoRunOnBoot: true,
+        autoRunOnMyPackageReplaced: true,
+        allowWakeLock: true,
+        allowWifiLock: true,
       ),
     );
   }
-}
 
-@pragma('vm:entry-point')
-Future<bool> onIosBackground(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  return true;
-}
-
-@pragma('vm:entry-point')
-void onStart(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize Supabase because this is a separate isolate
-  await Supabase.initialize(
-    url: AppConstants.supabaseUrl,
-    anonKey: AppConstants.supabaseAnonKey,
-  );
-
-  final String? deviceId = await _getDeviceId();
-
-  // We set a periodic timer for every 2 minutes
-  Timer.periodic(const Duration(minutes: 2), (timer) async {
-    final prefs = await SharedPreferences.getInstance();
-    final isTracking =
-        prefs.getBool(AppConstants.prefLocationTrackingEnabled) ?? false;
-
-    if (isTracking) {
-      debugPrint('Background Service: Tracking is ON. Fetching location...');
-      final loc = await LocationService.getCurrentLocation();
-
-      if (loc != null) {
-        final log = LocationLog(
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-          recordedAt: DateTime.now(),
-          deviceId: deviceId,
-        );
-
-        try {
-          await Supabase.instance.client
-              .from(AppConstants.tableLocationLogs)
-              .insert(log.toJson());
-          debugPrint(
-            'Background Service: Successfully inserted location info.',
-          );
-        } catch (e) {
-          debugPrint('Background Service: Failed to insert location log: $e');
-        }
-      } else {
-        debugPrint(
-          'Background Service: Location disabled or permissions missing.',
-        );
-      }
-    } else {
-      debugPrint('Background Service: Tracking is OFF.');
+  /// Starts the foreground service (shows a persistent notification).
+  static Future<ServiceRequestResult> start() async {
+    if (await FlutterForegroundTask.isRunningService) {
+      return FlutterForegroundTask.restartService();
     }
-  });
-}
-
-Future<String?> _getDeviceId() async {
-  final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-  try {
-    if (Platform.isAndroid) {
-      final info = await deviceInfo.androidInfo;
-      return info.id; // unique ID on Android
-    } else if (Platform.isIOS) {
-      final info = await deviceInfo.iosInfo;
-      return info.identifierForVendor;
-    }
-  } catch (e) {
-    debugPrint('Failed to get device info: $e');
+    return FlutterForegroundTask.startService(
+      serviceId: 256,
+      notificationTitle: 'WASTO Tracker',
+      notificationText: 'Location tracking active — ping every 2 min',
+      callback: startCallback,
+    );
   }
-  return null;
+
+  /// Stops the foreground service.
+  static Future<ServiceRequestResult> stop() {
+    return FlutterForegroundTask.stopService();
+  }
 }

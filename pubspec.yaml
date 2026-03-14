@@ -1,5 +1,5 @@
 name: wasteclassifier
-description: "A real-time waste classifier using your own Teachable Machine TFLite model."
+description: "WASTO Tracker — real-time waste detection with GPS location pings and Supabase logging."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -25,17 +25,21 @@ dependencies:
   http: ^1.6.0
   supabase_flutter: ^2.12.0
   geolocator: ^14.0.2
-  flutter_background_service: ^5.1.0
   shelf: ^1.4.2
   device_info_plus: ^12.3.0
   flutter_riverpod: ^3.3.1
   riverpod: ^3.2.1
+  # WASTO Tracker additions
+  flutter_dotenv: ^5.1.0
+  workmanager: ^0.5.2
+  flutter_foreground_task: ^8.2.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
+  build_runner: ^2.4.10
 
 flutter_launcher_icons:
   android: true
@@ -57,3 +61,5 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
+  assets:
+    - .env
