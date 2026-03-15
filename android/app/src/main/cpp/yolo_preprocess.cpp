@@ -57,9 +57,9 @@ static cv::Mat yuv420_to_bgr(
             // Cast the whole expression then round — matches the Dart fallback
             // which uses .round(), ensuring native and Dart paths produce
             // identical RGB values and therefore identical model inputs.
-            const int r = static_cast<int>(std::round(Y + 1.402f  * V));
+            const int r = static_cast<int>(std::round(Y + 1.402f * V));
             const int g = static_cast<int>(std::round(Y - 0.344136f * U - 0.714136f * V));
-            const int b = static_cast<int>(std::round(Y + 1.772f  * U));
+            const int b = static_cast<int>(std::round(Y + 1.772f * U));
 
             dst[col * 3 + 0] = static_cast<uint8_t>(std::max(0, std::min(255, b)));
             dst[col * 3 + 1] = static_cast<uint8_t>(std::max(0, std::min(255, g)));

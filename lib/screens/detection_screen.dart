@@ -121,9 +121,9 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ── Design tokens (sourced from AppColors) ───────────────────────────────
   static const Color _accentGreen = AppColors.accentGreen;
   static const Color _accentAmber = AppColors.accentAmber;
-  static const Color _accentRed   = AppColors.accentRed;
-  static const Color _accentCyan  = AppColors.accentCyan;
-  static const Color _panelBg     = AppColors.panelBg;
+  static const Color _accentRed = AppColors.accentRed;
+  static const Color _accentCyan = AppColors.accentCyan;
+  static const Color _panelBg = AppColors.panelBg;
 
   /// Maximum transmit rate to the ESP32 (ms between successive POSTs).
   static const int _kEsp32ThrottleMs = 1000;
@@ -1257,8 +1257,8 @@ class _PingGpsBadgeState extends State<_PingGpsBadge> {
   // Colour tokens sourced from the shared AppColors palette.
   static const Color _accentGreen = AppColors.accentGreen;
   static const Color _accentAmber = AppColors.accentAmber;
-  static const Color _accentRed   = AppColors.accentRed;
-  static const Color _panelBg     = AppColors.panelBg;
+  static const Color _accentRed = AppColors.accentRed;
+  static const Color _panelBg = AppColors.panelBg;
 
   int _pingCountdownSec = 120;
   GpsStatus _gpsStatus = GpsStatus.noFix;

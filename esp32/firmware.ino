@@ -3,8 +3,8 @@
 #include <ArduinoJson.h>
 
 // ─── Network Credentials ──────────────────────────
-const char* ssid = "WESTO_BIN_01";
-const char* password = "password123";
+const char *ssid = "WESTO_BIN_01";
+const char *password = "password123";
 
 // ─── Web Server ───────────────────────────────────
 WebServer server(80);
@@ -242,17 +242,21 @@ const char htmlDashboard[] PROGMEM = R"rawliteral(
 
 // ─── Handlers ─────────────────────────────────────
 
-void handleRoot() {
+void handleRoot()
+{
   server.send_P(200, "text/html", htmlDashboard);
 }
 
-void handlePing() {
+void handlePing()
+{
   // Simple check for the app connection screen
   server.send(200, "text/plain", "pong");
 }
 
-void handleDataPost() {
-  if (server.hasArg("plain") == false) {
+void handleDataPost()
+{
+  if (server.hasArg("plain") == false)
+  {
     server.send(400, "text/plain", "Body not received");
     return;
   }
@@ -269,35 +273,38 @@ void handleDataPost() {
 #endif
 }
 
-void handleLatestData() {
+void handleLatestData()
+{
   // Serve the last received payload to the dashboard UI
   server.send(200, "application/json", lastPayload);
 }
 
 // ─── Setup & Loop ─────────────────────────────────
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
-  
+
   // Start Access Point
   Serial.println("Starting SoftAP...");
   WiFi.softAP(ssid, password);
-  
+
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(IP); // Usually 192.168.4.1
-  
+
   // Routing
   server.on("/", HTTP_GET, handleRoot);
   server.on("/ping", HTTP_GET, handlePing);
   server.on("/data", HTTP_POST, handleDataPost);
   server.on("/api/latest", HTTP_GET, handleLatestData);
-  
+
   // Start server
   server.begin();
   Serial.println("HTTP server started");
 }
 
-void loop() {
+void loop()
+{
   server.handleClient();
 }
