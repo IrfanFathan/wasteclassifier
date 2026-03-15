@@ -90,7 +90,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   // ─── Frame throttle ──────────────────────────────────────────────────────
   /// Minimum interval between inference runs.  Skip frames that arrive faster.
-  static const int _frameThrottleMs = 300;
+  static const int _frameThrottleMs = 600;
   DateTime? _lastFrameProcessed;
 
   // ─── WASTO Tracker state ─────────────────────────────────────────────────
@@ -108,6 +108,12 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   /// Current GPS fix quality.
   GpsStatus _gpsStatus = GpsStatus.noFix;
+
+  /// Prevents overlapping GPS requests when the 2-second fetch exceeds the 1-second tick rate.
+  bool _gpsRefreshing = false;
+
+  /// Counts timer ticks so GPS is polled every 5 seconds instead of every 1.
+  int _tickCount = 0;
 
   /// UUID of this device in Supabase (loaded from SharedPreferences).
   String? _deviceId;
@@ -138,7 +144,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
+    );
     _pulseAnim = Tween<double>(begin: 0.35, end: 0.85).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
@@ -171,9 +177,12 @@ class _DetectionScreenState extends State<DetectionScreen>
   Future<void> _loadModel() async {
     try {
       final modelPath = await ModelManager.getModelPath();
-      final interpreter = Interpreter.fromFile(
-        File(modelPath),
-        options: InterpreterOptions()..threads = 2,
+      // Read file bytes asynchronously so the UI thread is not blocked
+      // by synchronous disk I/O during flatbuffer parsing.
+      final modelBytes = await File(modelPath).readAsBytes();
+      final interpreter = Interpreter.fromBuffer(
+        modelBytes,
+        options: InterpreterOptions()..threads = 1,
       );
       if (mounted) {
         setState(() {
@@ -183,6 +192,9 @@ class _DetectionScreenState extends State<DetectionScreen>
       }
     } catch (e) {
       debugPrint('Model load error: $e');
+      if (mounted) {
+        setState(() => _cameraError = 'Model failed to load: $e');
+      }
     }
   }
 
@@ -204,7 +216,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       final controller = CameraController(
         backCamera,
-        ResolutionPreset.high,
+        ResolutionPreset.medium,
         imageFormatGroup: ImageFormatGroup.yuv420,
         enableAudio: false,
       );
@@ -261,12 +273,12 @@ class _DetectionScreenState extends State<DetectionScreen>
     try {
       final numClasses = _labels.length;
 
-      // ── Step 1: Scan a 3×3 grid of zones ──────────────────────────────
-      // Each zone carries its true pixel centre (cx, cy), so the winning
-      // zone's position reflects both horizontal and vertical location
-      // in the frame — fixing the bug where cy was always fh/2 and the
-      // grid Y coordinate was permanently stuck at 0.
-      final zones = await ImageProcessor.scanGridZonesAsync(image);
+      // ── Step 1: Scan 3 horizontal zones ───────────────────────────────
+      // Uses the 3-zone horizontal path (left / centre / right) instead of
+      // the full 3×3 grid to cut TFLite calls from 9 to 3 — a 66% reduction
+      // that is critical for low-spec devices while retaining horizontal
+      // spatial resolution for the robot arm guidance.
+      final zones = await ImageProcessor.scanHorizontalZonesAsync(image);
 
       // ── Step 2: Run TFLite on each zone; keep the highest-confidence ──
       final outputBuffer = List<double>.filled(numClasses, 0.0);
@@ -340,6 +352,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     // Below threshold → waiting.
     if (confidence < config.confidenceThreshold) {
       if (_state != DetectionState.waiting) {
+        _pulseController.stop();
         setState(() {
           _state = DetectionState.waiting;
           _activePosition = null;
@@ -355,6 +368,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     );
     if (isNothing) {
       if (_state != DetectionState.waiting) {
+        _pulseController.stop();
         setState(() {
           _state = DetectionState.waiting;
           _activePosition = null;
@@ -392,6 +406,10 @@ class _DetectionScreenState extends State<DetectionScreen>
       minConfidence: config.confidenceThreshold,
     );
 
+    // Resume the pulse animation only when actively detecting.
+    if (!_pulseController.isAnimating) {
+      _pulseController.repeat(reverse: true);
+    }
     setState(() {
       _detectedLabel = label;
       _confidence = confidence;
@@ -469,18 +487,21 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   void _onSecondTick(Timer _) {
     if (!mounted) return;
+    _tickCount++;
     setState(() {
       _pingCountdownSec = _pingCountdownSec > 1 ? _pingCountdownSec - 1 : 120;
     });
-    _updateGpsStatus();
+    if (_tickCount % 5 == 0) _updateGpsStatus();
   }
 
   Future<void> _updateGpsStatus() async {
+    if (_gpsRefreshing) return;
+    _gpsRefreshing = true;
     try {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.low,
-          timeLimit: Duration(seconds: 2),
+          timeLimit: Duration(seconds: 4),
         ),
       );
       if (!mounted) return;
@@ -493,6 +514,8 @@ class _DetectionScreenState extends State<DetectionScreen>
       });
     } catch (_) {
       if (mounted) setState(() => _gpsStatus = GpsStatus.noFix);
+    } finally {
+      _gpsRefreshing = false;
     }
   }
 
@@ -527,6 +550,11 @@ class _DetectionScreenState extends State<DetectionScreen>
       final frame = _lastFrame;
       if (frame == null) return;
 
+      // Capture messenger before the await so it stays valid even if the
+      // widget is deactivated while the upload is in-flight.
+      final messenger =
+          mounted ? ScaffoldMessenger.of(context) : null;
+
       try {
         final rgbImage = ImageProcessor.convertToRgb(frame);
         await DetectionRepository.saveDetection(
@@ -539,15 +567,13 @@ class _DetectionScreenState extends State<DetectionScreen>
           frameWidth: fw,
           frameHeight: fh,
         );
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('$label detected — saved to database'),
-              duration: const Duration(seconds: 2),
-              backgroundColor: const Color(0xFF1E1E1E),
-            ),
-          );
-        }
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text('$label detected — saved to database'),
+            duration: const Duration(seconds: 2),
+            backgroundColor: const Color(0xFF1E1E1E),
+          ),
+        );
       } catch (e) {
         debugPrint('_maybeSaveDetection: $e');
       }
@@ -831,6 +857,18 @@ class _DetectionScreenState extends State<DetectionScreen>
               _cameraError!,
               style: GoogleFonts.inter(color: Colors.white60, fontSize: 14),
               textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            TextButton.icon(
+              onPressed: () {
+                setState(() => _cameraError = null);
+                _initialize();
+              },
+              icon: const Icon(Icons.refresh, color: _accentGreen),
+              label: Text(
+                'Retry',
+                style: GoogleFonts.inter(color: _accentGreen, fontSize: 14),
+              ),
             ),
           ],
         ),
