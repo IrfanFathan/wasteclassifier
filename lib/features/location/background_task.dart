@@ -48,6 +48,6 @@ Future<void> registerWorkmanagerTask(String deviceId) async {
     frequency: const Duration(minutes: 15),
     inputData: {'device_id': deviceId},
     constraints: Constraints(networkType: NetworkType.connected),
-    existingWorkPolicy: ExistingWorkPolicy.keep,
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
   );
 }

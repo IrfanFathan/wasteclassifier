@@ -23,7 +23,7 @@ void main() async {
   WastoForegroundService.init();
 
   // 4. Register the workmanager callback dispatcher for the background fallback.
-  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+  await Workmanager().initialize(callbackDispatcher);
 
   // 5. Register/fetch this device and start background location tracking.
   try {
