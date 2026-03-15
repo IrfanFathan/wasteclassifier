@@ -87,3 +87,7 @@ flutter {
     source = "../.."
 }
 
+dependencies {
+    // Kotlin coroutines — required for Dispatchers.Default in MainActivity.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+}

@@ -54,9 +54,12 @@ static cv::Mat yuv420_to_bgr(
             const int U = static_cast<int>(u_data[uv_idx]) - 128;
             const int V = static_cast<int>(v_data[uv_idx]) - 128;
 
-            const int r = Y + static_cast<int>(1.402f * V);
-            const int g = Y - static_cast<int>(0.344136f * U) - static_cast<int>(0.714136f * V);
-            const int b = Y + static_cast<int>(1.772f * U);
+            // Cast the whole expression then round — matches the Dart fallback
+            // which uses .round(), ensuring native and Dart paths produce
+            // identical RGB values and therefore identical model inputs.
+            const int r = static_cast<int>(std::round(Y + 1.402f  * V));
+            const int g = static_cast<int>(std::round(Y - 0.344136f * U - 0.714136f * V));
+            const int b = static_cast<int>(std::round(Y + 1.772f  * U));
 
             dst[col * 3 + 0] = static_cast<uint8_t>(std::max(0, std::min(255, b)));
             dst[col * 3 + 1] = static_cast<uint8_t>(std::max(0, std::min(255, g)));
@@ -260,7 +263,14 @@ extern "C"
             return nullptr;
         }
 
-        std::vector<float> output(total_len);
+        // Thread-local reusable buffer — grows to the maximum required size
+        // and is then reused for every subsequent JNI call on the same thread.
+        // No mutex needed: each Dispatchers.Default worker thread has its own instance.
+        static thread_local std::vector<float> tl_output;
+        if (static_cast<int>(tl_output.size()) < total_len)
+        {
+            tl_output.resize(total_len);
+        }
 
         for (int row = 0; row < rows; ++row)
         {
@@ -273,11 +283,11 @@ extern "C"
 
                 const int zone_idx = row * cols + col;
                 zone_to_float32(full_bgr, x, y, w, h, target_size,
-                                output.data() + zone_idx * zone_len);
+                                tl_output.data() + zone_idx * zone_len);
             }
         }
 
-        env->SetFloatArrayRegion(j_result, 0, total_len, output.data());
+        env->SetFloatArrayRegion(j_result, 0, total_len, tl_output.data());
         LOGI("preprocessGridZones OK: frame=%dx%d grid=%dx%d target=%d",
              frame_width, frame_height, cols, rows, target_size);
         return j_result;
@@ -340,16 +350,22 @@ extern "C"
             return nullptr;
         }
 
-        std::vector<float> output(total_len);
+        // Thread-local reusable buffer (see preprocessGridZones for rationale).
+        static thread_local std::vector<float> tl_output;
+        if (static_cast<int>(tl_output.size()) < total_len)
+        {
+            tl_output.resize(total_len);
+        }
+
         for (int z = 0; z < 3; ++z)
         {
             zone_to_float32(full_bgr,
                             zones[z].x, 0, zones[z].w, frame_height,
                             target_size,
-                            output.data() + z * zone_len);
+                            tl_output.data() + z * zone_len);
         }
 
-        env->SetFloatArrayRegion(j_result, 0, total_len, output.data());
+        env->SetFloatArrayRegion(j_result, 0, total_len, tl_output.data());
         LOGI("preprocessHorizontalZones OK: frame=%dx%d target=%d",
              frame_width, frame_height, target_size);
         return j_result;

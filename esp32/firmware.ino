@@ -11,11 +11,10 @@ WebServer server(80);
 
 // ─── State ────────────────────────────────────────
 String lastPayload = "{}";
-unsigned long lastUpdate = 0;
 
 // ─── HTML Dashboard ───────────────────────────────
-// A sleek, dark dashboard matching the Flutter app's aesthetics
-const char* htmlDashboard = R"rawliteral(
+// Stored in flash (PROGMEM) to avoid consuming ~4 KB of the ESP32's RAM.
+const char htmlDashboard[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -244,7 +243,7 @@ const char* htmlDashboard = R"rawliteral(
 // ─── Handlers ─────────────────────────────────────
 
 void handleRoot() {
-  server.send(200, "text/html", htmlDashboard);
+  server.send_P(200, "text/html", htmlDashboard);
 }
 
 void handlePing() {
@@ -257,15 +256,17 @@ void handleDataPost() {
     server.send(400, "text/plain", "Body not received");
     return;
   }
-  
-  // Store payload
+
+  // Store payload.
   lastPayload = server.arg("plain");
-  lastUpdate = millis();
-  
-  // Acknowledge receipt
+
+  // Acknowledge receipt.
   server.send(200, "application/json", "{\"status\":\"success\"}");
+
+#ifdef DEBUG
   Serial.println("Received Payload:");
   Serial.println(lastPayload);
+#endif
 }
 
 void handleLatestData() {
@@ -299,5 +300,4 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  delay(10);
 }

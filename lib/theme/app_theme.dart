@@ -1,5 +1,16 @@
 import 'package:flutter/material.dart';
 
+/// Shared colour tokens used across DetectionScreen, _PingGpsBadge,
+/// and any other widget that needs the detection-UI palette.
+class AppColors {
+  static const Color accentGreen = Color(0xFF00E676);
+  static const Color accentAmber = Color(0xFFFFD740);
+  static const Color accentRed   = Color(0xFFFF5252);
+  static const Color accentCyan  = Color(0xFF00B0FF);
+  /// 90 % opaque dark panel background.
+  static const Color panelBg     = Color(0xE6121212);
+}
+
 class AppTheme {
   // Use a dark-themed UI (background: #0A0A0A)
   static const Color background = Color(0xFF0A0A0A);

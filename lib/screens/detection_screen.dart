@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -21,6 +22,7 @@ import '../utils/model_manager.dart';
 import '../utils/waste_locator.dart';
 import '../services/esp32_service.dart';
 import '../shared/constants.dart';
+import '../theme/app_theme.dart';
 import 'bin_setup_screen.dart';
 import 'device_settings_screen.dart';
 import 'upload_screen.dart';
@@ -88,6 +90,15 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── ESP32 ──────────────────────────────────────────────────────────────
   DateTime? _lastEspTransmission;
 
+  // ─── Cached inference I/O buffers ────────────────────────────────────────
+  /// Pre-allocated output buffer — reused across every inference call.
+  List<double>? _outputBuffer;
+  List<List<double>>? _output;
+
+  // ─── Cached SharedPreferences ─────────────────────────────────────────────
+  /// Loaded once in [_initialize]; avoids per-detection platform-channel round-trips.
+  SharedPreferences? _prefs;
+
   // ─── Frame throttle ──────────────────────────────────────────────────────
   /// Minimum interval between inference runs.  Skip frames that arrive faster.
   static const int _frameThrottleMs = 600;
@@ -107,12 +118,15 @@ class _DetectionScreenState extends State<DetectionScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
 
-  // ── Design tokens ────────────────────────────────────────────────────────
-  static const Color _accentGreen = Color(0xFF00E676);
-  static const Color _accentAmber = Color(0xFFFFD740);
-  static const Color _accentRed = Color(0xFFFF5252);
-  static const Color _accentCyan = Color(0xFF00B0FF);
-  static const Color _panelBg = Color(0xE6121212); // 90% opaque dark
+  // ── Design tokens (sourced from AppColors) ───────────────────────────────
+  static const Color _accentGreen = AppColors.accentGreen;
+  static const Color _accentAmber = AppColors.accentAmber;
+  static const Color _accentRed   = AppColors.accentRed;
+  static const Color _accentCyan  = AppColors.accentCyan;
+  static const Color _panelBg     = AppColors.panelBg;
+
+  /// Maximum transmit rate to the ESP32 (ms between successive POSTs).
+  static const int _kEsp32ThrottleMs = 1000;
 
   @override
   void initState() {
@@ -140,6 +154,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── Initialisation ──────────────────────────────────────────────────────
 
   Future<void> _initialize() async {
+    _prefs = await SharedPreferences.getInstance();
     await _loadConfig();
     await _loadModel();
     await _initCamera();
@@ -168,6 +183,9 @@ class _DetectionScreenState extends State<DetectionScreen>
         modelBytes,
         options: InterpreterOptions()..threads = 1,
       );
+      // Pre-allocate inference I/O buffers once — reused every frame.
+      _outputBuffer = List<double>.filled(_labels.length, 0.0);
+      _output = [_outputBuffer!];
       if (mounted) {
         setState(() {
           _interpreter = interpreter;
@@ -256,6 +274,9 @@ class _DetectionScreenState extends State<DetectionScreen>
   Future<void> _runInference(CameraImage image) async {
     try {
       final numClasses = _labels.length;
+      final outputBuffer = _outputBuffer;
+      final output = _output;
+      if (outputBuffer == null || output == null) return;
 
       // ── Step 1: Scan 3 horizontal zones ───────────────────────────────
       // Uses the 3-zone horizontal path (left / centre / right) instead of
@@ -265,8 +286,6 @@ class _DetectionScreenState extends State<DetectionScreen>
       final zones = await ImageProcessor.scanHorizontalZonesAsync(image);
 
       // ── Step 2: Run TFLite on each zone; keep the highest-confidence ──
-      final outputBuffer = List<double>.filled(numClasses, 0.0);
-      final output = [outputBuffer];
 
       double bestConf = 0.0;
       int bestLabelIdx = 0;
@@ -403,12 +422,16 @@ class _DetectionScreenState extends State<DetectionScreen>
       if (matchedBin != null) {
         _state = DetectionState.detected;
         _detectedBin = matchedBin;
-        _transmitToEsp32(label, matchedBin, confidence, location, gridPos);
       } else {
         _state = DetectionState.unmapped;
         _detectedBin = null;
       }
     });
+
+    // Side-effects are dispatched AFTER the state rebuild is committed.
+    if (matchedBin != null) {
+      _transmitToEsp32(label, matchedBin, confidence, location, gridPos);
+    }
 
     // WASTO Tracker: persist detection to Supabase.
     if (confidence >= AppConstants.kDetectionConfidenceThreshold) {
@@ -416,25 +439,27 @@ class _DetectionScreenState extends State<DetectionScreen>
     }
   }
 
-  void _transmitToEsp32(
+  Future<void> _transmitToEsp32(
     String label,
     BinCategory bin,
     double confidence,
     WasteLocation location,
     GridPosition gridPos,
-  ) {
+  ) async {
     if (!Esp32Service().isConnected) return;
 
-    // Throttle transmissions to once per second so we don't spam the ESP32
+    // Throttle transmissions so we don't spam the ESP32.
     final now = DateTime.now();
     if (_lastEspTransmission != null &&
-        now.difference(_lastEspTransmission!).inMilliseconds < 1000) {
+        now.difference(_lastEspTransmission!).inMilliseconds <
+            _kEsp32ThrottleMs) {
       return;
     }
     _lastEspTransmission = now;
 
-    // Send waste classification data.
-    Esp32Service().sendWasteData(
+    // Send waste classification data first; await completion so the robot
+    // command does not overwrite the waste payload on the ESP32 /data endpoint.
+    final sent = await Esp32Service().sendWasteData(
       label: label,
       binId: bin.id,
       binName: bin.name,
@@ -448,9 +473,11 @@ class _DetectionScreenState extends State<DetectionScreen>
       pixelY: gridPos.pixelY,
     );
 
-    // Also send the structured grid command for robotic arm.
-    final command = RobotController.createRobotCommand(gridPos);
-    Esp32Service().sendRobotCommand(command);
+    // Only send the robot arm command after the dashboard payload is confirmed.
+    if (sent) {
+      final command = RobotController.createRobotCommand(gridPos);
+      Esp32Service().sendRobotCommand(command);
+    }
   }
 
   // ─── WASTO Tracker helpers ────────────────────────────────────────────────
@@ -478,9 +505,9 @@ class _DetectionScreenState extends State<DetectionScreen>
     // Fire-and-forget: all logic runs async to avoid stalling the camera stream.
     Future(() async {
       // Respect the user-controllable detection logging toggle.
-      final prefs = await SharedPreferences.getInstance();
+      // Use the cached prefs instance — no platform-channel round-trip.
       final loggingEnabled =
-          prefs.getBool(AppConstants.prefDetectionLoggingEnabled) ?? true;
+          (_prefs?.getBool(AppConstants.prefDetectionLoggingEnabled)) ?? true;
       if (!loggingEnabled) return;
 
       // Enforce the 5-second cooldown.
@@ -500,7 +527,12 @@ class _DetectionScreenState extends State<DetectionScreen>
       final messenger = mounted ? ScaffoldMessenger.of(context) : null;
 
       try {
-        final rgbImage = ImageProcessor.convertToRgb(frame);
+        // Offload the full-frame YUV→RGB decode to a worker isolate so the
+        // main isolate is not blocked by the ~307 000-iteration pixel loop.
+        final rgbImage = await compute(
+          (CameraImage f) => ImageProcessor.convertToRgb(f),
+          frame,
+        );
         await DetectionRepository.saveDetection(
           deviceId: _deviceId!,
           rgbFrame: rgbImage,
@@ -1222,10 +1254,11 @@ class _PingGpsBadge extends StatefulWidget {
 }
 
 class _PingGpsBadgeState extends State<_PingGpsBadge> {
-  static const Color _accentGreen = Color(0xFF00E676);
-  static const Color _accentAmber = Color(0xFFFFD740);
-  static const Color _accentRed = Color(0xFFFF5252);
-  static const Color _panelBg = Color(0xE6121212);
+  // Colour tokens sourced from the shared AppColors palette.
+  static const Color _accentGreen = AppColors.accentGreen;
+  static const Color _accentAmber = AppColors.accentAmber;
+  static const Color _accentRed   = AppColors.accentRed;
+  static const Color _panelBg     = AppColors.panelBg;
 
   int _pingCountdownSec = 120;
   GpsStatus _gpsStatus = GpsStatus.noFix;
