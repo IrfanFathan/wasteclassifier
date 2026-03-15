@@ -22,6 +22,7 @@ import '../utils/waste_locator.dart';
 import '../services/esp32_service.dart';
 import '../shared/constants.dart';
 import 'bin_setup_screen.dart';
+import 'device_settings_screen.dart';
 import 'upload_screen.dart';
 
 // ─── Detection State ──────────────────────────────────────────────────────
@@ -505,19 +506,27 @@ class _DetectionScreenState extends State<DetectionScreen>
     int fh,
   ) {
     if (_deviceId == null) return;
-    final now = DateTime.now();
-    if (_lastDetectionSaved != null &&
-        now.difference(_lastDetectionSaved!) <
-            AppConstants.kDetectionCooldown) {
-      return;
-    }
-    _lastDetectionSaved = now;
 
-    final frame = _lastFrame;
-    if (frame == null) return;
-
-    // Convert and save asynchronously without blocking the camera stream.
+    // Fire-and-forget: all logic runs async to avoid stalling the camera stream.
     Future(() async {
+      // Respect the user-controllable detection logging toggle.
+      final prefs = await SharedPreferences.getInstance();
+      final loggingEnabled =
+          prefs.getBool(AppConstants.prefDetectionLoggingEnabled) ?? true;
+      if (!loggingEnabled) return;
+
+      // Enforce the 5-second cooldown.
+      final now = DateTime.now();
+      if (_lastDetectionSaved != null &&
+          now.difference(_lastDetectionSaved!) <
+              AppConstants.kDetectionCooldown) {
+        return;
+      }
+      _lastDetectionSaved = now;
+
+      final frame = _lastFrame;
+      if (frame == null) return;
+
       try {
         final rgbImage = ImageProcessor.convertToRgb(frame);
         await DetectionRepository.saveDetection(
@@ -621,6 +630,26 @@ class _DetectionScreenState extends State<DetectionScreen>
     ]);
 
     await _loadConfig();
+    _cameraController?.startImageStream(_onCameraFrame);
+  }
+
+  Future<void> _openDeviceSettings() async {
+    await _cameraController?.stopImageStream();
+    if (!mounted) return;
+
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const DeviceSettingsScreen()),
+    );
+
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
+    // Reload device ID in case it changed while in settings.
+    await _loadDeviceId();
     _cameraController?.startImageStream(_onCameraFrame);
   }
 
@@ -881,6 +910,8 @@ class _DetectionScreenState extends State<DetectionScreen>
           const SizedBox(width: 8),
         ],
         _iconBtn(Icons.tune_rounded, _openSettings, label: 'Bin Setup'),
+        const SizedBox(width: 8),
+        _iconBtn(Icons.manage_accounts_rounded, _openDeviceSettings),
         const SizedBox(width: 8),
         _iconBtn(Icons.swap_horiz_rounded, _confirmChangeModel),
       ],

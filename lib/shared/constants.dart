@@ -23,5 +23,6 @@ class AppConstants {
 
   // ── Shared Preferences Keys ────────────────────────────────────────────
   static const String prefLocationTrackingEnabled = 'location_tracking_enabled';
+  static const String prefDetectionLoggingEnabled = 'detection_logging_enabled';
   static const String prefDeviceId = 'wasto_device_id';
 }

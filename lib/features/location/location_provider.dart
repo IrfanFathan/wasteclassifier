@@ -25,6 +25,11 @@ class LocationPingNotifier extends AsyncNotifier<String?> {
 
   Future<void> _doPing() async {
     final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool(AppConstants.prefLocationTrackingEnabled) ?? true;
+    if (!enabled) {
+      debugPrint('LocationPingNotifier: location tracking disabled, skipping');
+      return;
+    }
     final deviceId = prefs.getString(AppConstants.prefDeviceId);
     if (deviceId == null) {
       debugPrint(

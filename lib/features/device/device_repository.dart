@@ -51,6 +51,56 @@ class DeviceRepository {
     }
   }
 
+  /// Fetches the full device row from Supabase by UUID.
+  /// Returns null if the row cannot be retrieved.
+  static Future<Map<String, dynamic>?> fetchDevice(String deviceId) async {
+    try {
+      return await Supabase.instance.client
+          .from(AppConstants.tableDevices)
+          .select()
+          .eq('id', deviceId)
+          .single();
+    } catch (e) {
+      debugPrint('DeviceRepository: fetchDevice failed: $e');
+      return null;
+    }
+  }
+
+  /// Sets `is_active` on this device row in Supabase.
+  static Future<void> setActiveStatus(
+    String deviceId, {
+    required bool active,
+  }) async {
+    try {
+      await Supabase.instance.client
+          .from(AppConstants.tableDevices)
+          .update({'is_active': active})
+          .eq('id', deviceId);
+      debugPrint(
+        'DeviceRepository: is_active=$active for device_id=$deviceId',
+      );
+    } catch (e) {
+      debugPrint('DeviceRepository: setActiveStatus failed: $e');
+      rethrow;
+    }
+  }
+
+  /// Updates `device_name` in Supabase.
+  static Future<void> updateDeviceName(
+    String deviceId,
+    String name,
+  ) async {
+    try {
+      await Supabase.instance.client
+          .from(AppConstants.tableDevices)
+          .update({'device_name': name.trim()})
+          .eq('id', deviceId);
+    } catch (e) {
+      debugPrint('DeviceRepository: updateDeviceName failed: $e');
+      rethrow;
+    }
+  }
+
   static Future<String> _deviceModel() async {
     try {
       if (Platform.isAndroid) {
