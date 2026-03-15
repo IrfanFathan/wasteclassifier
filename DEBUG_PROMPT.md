@@ -132,6 +132,7 @@ throttle window itself, causing `_isProcessing` to be true permanently and
 effectively freezing inference.
 
 **Fix options** (pick one based on accuracy requirement):
+
 - Use the existing `scanHorizontalZonesAsync` (3 zones) instead of
   `scanGridZonesAsync` (9 zones) to cut inferences by 66%.
 - Run only the center zone (1 inference) as a fast path; fall back to 9-zone
@@ -217,6 +218,7 @@ flutter pub global run devtools
 ```
 
 In DevTools → **Performance** tab:
+
 - Look for frames exceeding 16ms (red bars = jank)
 - Check the **CPU profiler** for the hottest call stacks
 
@@ -277,26 +279,26 @@ or `Broadcast of Intent ... took too long` in the ANR trace.
 
 ## Quick Optimization Checklist for Low-Spec Devices
 
-| # | Location | Change | Expected gain |
-|---|----------|--------|---------------|
-| 1 | `detection_screen.dart:207` | `ResolutionPreset.high` → `medium` | 75% less frame memory |
-| 2 | `detection_screen.dart:93` | `_frameThrottleMs = 300` → `600` | 50% fewer inference cycles |
-| 3 | `detection_screen.dart:269` | `scanGridZonesAsync` (9 zones) → `scanHorizontalZonesAsync` (3 zones) | 66% fewer TFLite calls |
-| 4 | `detection_screen.dart:176` | `threads = 2` → `threads = 1` | Avoids context-switch overhead on single-core |
-| 5 | `detection_screen.dart:475` | GPS every tick → GPS every 5 ticks | 80% fewer GPS requests |
-| 6 | `detection_screen.dart:138` | Pause pulse animation when not detecting | Saves 60 vsync callbacks/sec |
-| 7 | `android/local.properties` | Set `opencv.sdk.path` | Native YUV path: ~10ms vs ~300ms |
+| #   | Location                    | Change                                                                | Expected gain                                 |
+| --- | --------------------------- | --------------------------------------------------------------------- | --------------------------------------------- |
+| 1   | `detection_screen.dart:207` | `ResolutionPreset.high` → `medium`                                    | 75% less frame memory                         |
+| 2   | `detection_screen.dart:93`  | `_frameThrottleMs = 300` → `600`                                      | 50% fewer inference cycles                    |
+| 3   | `detection_screen.dart:269` | `scanGridZonesAsync` (9 zones) → `scanHorizontalZonesAsync` (3 zones) | 66% fewer TFLite calls                        |
+| 4   | `detection_screen.dart:176` | `threads = 2` → `threads = 1`                                         | Avoids context-switch overhead on single-core |
+| 5   | `detection_screen.dart:475` | GPS every tick → GPS every 5 ticks                                    | 80% fewer GPS requests                        |
+| 6   | `detection_screen.dart:138` | Pause pulse animation when not detecting                              | Saves 60 vsync callbacks/sec                  |
+| 7   | `android/local.properties`  | Set `opencv.sdk.path`                                                 | Native YUV path: ~10ms vs ~300ms              |
 
 ---
 
 ## Files Reference
 
-| File | Role |
-|------|------|
-| `lib/screens/detection_screen.dart` | Main inference + camera loop (1268 lines) |
-| `lib/utils/image_processor.dart` | YUV→RGB, zone crop, tensor build |
-| `lib/features/detection/detection_repository.dart` | Supabase upload + insert |
-| `lib/features/location/location_repository.dart` | GPS ping insert |
-| `lib/core/background_service.dart` | Foreground service task handler |
-| `android/app/src/main/cpp/yolo_preprocess.cpp` | Native OpenCV JNI |
-| `android/app/src/main/cpp/CMakeLists.txt` | NDK build config |
+| File                                               | Role                                      |
+| -------------------------------------------------- | ----------------------------------------- |
+| `lib/screens/detection_screen.dart`                | Main inference + camera loop (1268 lines) |
+| `lib/utils/image_processor.dart`                   | YUV→RGB, zone crop, tensor build          |
+| `lib/features/detection/detection_repository.dart` | Supabase upload + insert                  |
+| `lib/features/location/location_repository.dart`   | GPS ping insert                           |
+| `lib/core/background_service.dart`                 | Foreground service task handler           |
+| `android/app/src/main/cpp/yolo_preprocess.cpp`     | Native OpenCV JNI                         |
+| `android/app/src/main/cpp/CMakeLists.txt`          | NDK build config                          |

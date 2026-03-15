@@ -100,21 +100,6 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// Prevents flooding Supabase with duplicate detections.
   DateTime? _lastDetectionSaved;
 
-  /// Countdown timer that ticks every second.
-  Timer? _pingTimer;
-
-  /// Seconds remaining until the next location ping fires.
-  int _pingCountdownSec = 120;
-
-  /// Current GPS fix quality.
-  GpsStatus _gpsStatus = GpsStatus.noFix;
-
-  /// Prevents overlapping GPS requests when the 2-second fetch exceeds the 1-second tick rate.
-  bool _gpsRefreshing = false;
-
-  /// Counts timer ticks so GPS is polled every 5 seconds instead of every 1.
-  int _tickCount = 0;
-
   /// UUID of this device in Supabase (loaded from SharedPreferences).
   String? _deviceId;
 
@@ -149,7 +134,6 @@ class _DetectionScreenState extends State<DetectionScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
     _loadDeviceId();
-    _startPingCountdown();
     _initialize();
   }
 
@@ -480,45 +464,6 @@ class _DetectionScreenState extends State<DetectionScreen>
     }
   }
 
-  void _startPingCountdown() {
-    _pingTimer?.cancel();
-    _pingTimer = Timer.periodic(const Duration(seconds: 1), _onSecondTick);
-  }
-
-  void _onSecondTick(Timer _) {
-    if (!mounted) return;
-    _tickCount++;
-    setState(() {
-      _pingCountdownSec = _pingCountdownSec > 1 ? _pingCountdownSec - 1 : 120;
-    });
-    if (_tickCount % 5 == 0) _updateGpsStatus();
-  }
-
-  Future<void> _updateGpsStatus() async {
-    if (_gpsRefreshing) return;
-    _gpsRefreshing = true;
-    try {
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.low,
-          timeLimit: Duration(seconds: 4),
-        ),
-      );
-      if (!mounted) return;
-      setState(() {
-        _gpsStatus = pos.accuracy < 50
-            ? GpsStatus.fix
-            : pos.accuracy < 200
-            ? GpsStatus.lowAccuracy
-            : GpsStatus.noFix;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _gpsStatus = GpsStatus.noFix);
-    } finally {
-      _gpsRefreshing = false;
-    }
-  }
-
   /// Saves a detection to Supabase when the 5-second cooldown has elapsed.
   void _maybeSaveDetection(
     String label,
@@ -552,8 +497,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       // Capture messenger before the await so it stays valid even if the
       // widget is deactivated while the upload is in-flight.
-      final messenger =
-          mounted ? ScaffoldMessenger.of(context) : null;
+      final messenger = mounted ? ScaffoldMessenger.of(context) : null;
 
       try {
         final rgbImage = ImageProcessor.convertToRgb(frame);
@@ -665,9 +609,9 @@ class _DetectionScreenState extends State<DetectionScreen>
 
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const DeviceSettingsScreen()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const DeviceSettingsScreen()));
 
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -682,7 +626,6 @@ class _DetectionScreenState extends State<DetectionScreen>
   @override
   void dispose() {
     _pulseController.dispose();
-    _pingTimer?.cancel();
     _cameraController?.stopImageStream();
     _cameraController?.dispose();
     _interpreter?.close();
@@ -783,46 +726,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   // ─── Widget builders ──────────────────────────────────────────────────────
 
-  Widget _buildPingGpsBadge() {
-    final gpsColor = switch (_gpsStatus) {
-      GpsStatus.fix => _accentGreen,
-      GpsStatus.lowAccuracy => _accentAmber,
-      GpsStatus.noFix => _accentRed,
-    };
-    final mins = _pingCountdownSec ~/ 60;
-    final secs = _pingCountdownSec % 60;
-    final countdownLabel =
-        'Ping ${mins.toString().padLeft(1, '0')}:${secs.toString().padLeft(2, '0')}';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: _panelBg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // GPS dot
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: gpsColor),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            countdownLabel,
-            style: GoogleFonts.robotoMono(
-              color: Colors.white54,
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildPingGpsBadge() => const _PingGpsBadge();
 
   Widget _buildLoadingView() {
     return Center(
@@ -1304,3 +1208,117 @@ class _DetectionScreenState extends State<DetectionScreen>
 
 // Grid overlay is now provided by Grid8x8Overlay from
 // lib/ui/grid_overlay_painter.dart
+
+// ─── Ping / GPS Badge ─────────────────────────────────────────────────────────
+//
+// Isolated into its own StatefulWidget so the 1-second timer setState only
+// rebuilds this small pill — not the entire DetectionScreen tree.
+
+class _PingGpsBadge extends StatefulWidget {
+  const _PingGpsBadge();
+
+  @override
+  State<_PingGpsBadge> createState() => _PingGpsBadgeState();
+}
+
+class _PingGpsBadgeState extends State<_PingGpsBadge> {
+  static const Color _accentGreen = Color(0xFF00E676);
+  static const Color _accentAmber = Color(0xFFFFD740);
+  static const Color _accentRed = Color(0xFFFF5252);
+  static const Color _panelBg = Color(0xE6121212);
+
+  int _pingCountdownSec = 120;
+  GpsStatus _gpsStatus = GpsStatus.noFix;
+  bool _gpsRefreshing = false;
+  int _tickCount = 0;
+  Timer? _pingTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _pingTimer = Timer.periodic(const Duration(seconds: 1), _onTick);
+  }
+
+  @override
+  void dispose() {
+    _pingTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onTick(Timer _) {
+    if (!mounted) return;
+    _tickCount++;
+    setState(() {
+      _pingCountdownSec = _pingCountdownSec > 1 ? _pingCountdownSec - 1 : 120;
+    });
+    if (_tickCount % 5 == 0) _refreshGps();
+  }
+
+  Future<void> _refreshGps() async {
+    if (_gpsRefreshing) return;
+    _gpsRefreshing = true;
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.low,
+          timeLimit: Duration(seconds: 4),
+        ),
+      );
+      if (!mounted) return;
+      final next = pos.accuracy < 50
+          ? GpsStatus.fix
+          : pos.accuracy < 200
+          ? GpsStatus.lowAccuracy
+          : GpsStatus.noFix;
+      // Only rebuild if the status actually changed.
+      if (next != _gpsStatus) setState(() => _gpsStatus = next);
+    } catch (_) {
+      if (mounted && _gpsStatus != GpsStatus.noFix) {
+        setState(() => _gpsStatus = GpsStatus.noFix);
+      }
+    } finally {
+      _gpsRefreshing = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final gpsColor = switch (_gpsStatus) {
+      GpsStatus.fix => _accentGreen,
+      GpsStatus.lowAccuracy => _accentAmber,
+      GpsStatus.noFix => _accentRed,
+    };
+    final mins = _pingCountdownSec ~/ 60;
+    final secs = _pingCountdownSec % 60;
+    final label =
+        'Ping ${mins.toString().padLeft(1, '0')}:${secs.toString().padLeft(2, '0')}';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _panelBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: gpsColor),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: GoogleFonts.robotoMono(
+              color: Colors.white54,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
