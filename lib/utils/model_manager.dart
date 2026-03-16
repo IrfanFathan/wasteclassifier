@@ -99,7 +99,8 @@ class ModelManager {
     final labelsPath = await getLabelsPath();
     final file = File(labelsPath);
     if (!file.existsSync()) return [];
-    final lines = await file.readAsLines();
+    final raw = await file.readAsString();
+    final lines = raw.split(RegExp(r'\r\n|\r|\n'));
     return lines.map((line) {
       final trimmed = line.trim();
       final parts = trimmed.split(RegExp(r'\s+'));

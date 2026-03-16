@@ -1,10 +1,16 @@
 // yolo_preprocess.cpp
 //
-// JNI bridge for fast YUV_420_888 → RGB → crop → resize → Float32 tensor.
+// JNI bridge for fast YUV_420_888 preprocessing via OpenCV.
+//
+// Provides two pipeline styles:
+//   1. Legacy grid/zone preprocessing (kept for backwards compatibility).
+//   2. New full-frame preprocessing with blur check -> CLAHE -> letterbox
+//      resize -> float32 normalisation, returning metadata for coordinate
+//      unmapping.
 //
 // When compiled with OpenCV (HAVE_OPENCV defined via CMake), the functions
 // perform full native preprocessing.  Without OpenCV they return nullptr so
-// the Dart side falls back to the pure-Dart ImageProcessor implementation.
+// the Dart side falls back to the pure-Dart implementation.
 
 #include <jni.h>
 #include <android/log.h>
@@ -21,15 +27,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
-// ─── YUV_420_888 → BGR ────────────────────────────────────────────────────
-//
-// Android YUV_420_888 planes:
-//   plane[0] = Y  (one byte per pixel, y_row_stride bytes per row)
-//   plane[1] = U  (one byte per pixel pair, semi-planar or planar)
-//   plane[2] = V  (same layout as U)
-//
-// uv_pixel_stride == 2  → interleaved NV12/NV21-style UV
-// uv_pixel_stride == 1  → fully planar YUV420p-style
+// ─── YUV_420_888 -> BGR ──────────────────────────────────────────────────
 
 static cv::Mat yuv420_to_bgr(
     const uint8_t *y_data, int y_row_stride,
@@ -104,13 +102,12 @@ struct YuvPlanes
     const uint8_t *v() const { return reinterpret_cast<const uint8_t *>(v_raw); }
 };
 
-// ─── Helper: zone → Float32 slice ─────────────────────────────────────────
+// ─── Helper: zone -> Float32 slice (legacy grid pipeline) ────────────────
 static void zone_to_float32(
     const cv::Mat &full_bgr,
     int zone_x, int zone_y, int zone_w, int zone_h,
     int target_size,
-    float *out // caller-allocated, size = target²×3
-)
+    float *out)
 {
     cv::Mat zone_bgr = full_bgr(
                            cv::Rect(zone_x, zone_y, zone_w, zone_h))
@@ -136,6 +133,75 @@ static void zone_to_float32(
     }
 }
 
+// ─── Blur detection (Laplacian variance) ─────────────────────────────────
+
+static double compute_blur_score(const cv::Mat &bgr)
+{
+    cv::Mat gray;
+    cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+
+    cv::Mat laplacian;
+    cv::Laplacian(gray, laplacian, CV_64F);
+
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(laplacian, mean, stddev);
+
+    return stddev.val[0] * stddev.val[0]; // variance
+}
+
+// ─── CLAHE on L channel of LAB colourspace ───────────────────────────────
+
+static void apply_clahe(cv::Mat &bgr)
+{
+    cv::Mat lab;
+    cv::cvtColor(bgr, lab, cv::COLOR_BGR2Lab);
+
+    std::vector<cv::Mat> channels;
+    cv::split(lab, channels);
+
+    cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
+    clahe->apply(channels[0], channels[0]);
+
+    cv::merge(channels, lab);
+    cv::cvtColor(lab, bgr, cv::COLOR_Lab2BGR);
+}
+
+// ─── Letterbox resize ────────────────────────────────────────────────────
+
+struct LetterboxResult
+{
+    cv::Mat mat;
+    double scale;
+    int pad_left;
+    int pad_top;
+};
+
+static LetterboxResult letterbox_resize(const cv::Mat &src, int target_size)
+{
+    const double scale = std::min(
+        static_cast<double>(target_size) / src.cols,
+        static_cast<double>(target_size) / src.rows);
+
+    const int new_w = static_cast<int>(src.cols * scale);
+    const int new_h = static_cast<int>(src.rows * scale);
+
+    cv::Mat resized;
+    cv::resize(src, resized, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
+
+    const int pad_left = (target_size - new_w) / 2;
+    const int pad_top = (target_size - new_h) / 2;
+    const int pad_right = target_size - new_w - pad_left;
+    const int pad_bottom = target_size - new_h - pad_top;
+
+    cv::Mat padded;
+    cv::copyMakeBorder(
+        resized, padded,
+        pad_top, pad_bottom, pad_left, pad_right,
+        cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114));
+
+    return {padded, scale, pad_left, pad_top};
+}
+
 #endif // HAVE_OPENCV
 
 // ─── JNI entry points ─────────────────────────────────────────────────────
@@ -156,6 +222,105 @@ extern "C"
         return JNI_TRUE;
 #else
         return JNI_FALSE;
+#endif
+    }
+
+    // ── preprocessFrame ─────────────────────────────────────────────────────
+    //
+    // Full-frame pipeline: blur check -> CLAHE -> letterbox -> normalise.
+    //
+    // Returns float array of length target*target*3 + 4 metadata values:
+    //   [0 .. N-1]  = RGB float32 tensor [0,1]
+    //   [N+0] = padLeft  (float)
+    //   [N+1] = padTop   (float)
+    //   [N+2] = scale    (float)
+    //   [N+3] = skipped  (1.0 if blurry, 0.0 otherwise)
+    JNIEXPORT jfloatArray JNICALL
+    Java_com_example_wasteclassifier_OpenCVHelper_preprocessFrame(
+        JNIEnv *env, jobject /* obj */,
+        jbyteArray j_y_plane, jbyteArray j_u_plane, jbyteArray j_v_plane,
+        jint y_row_stride, jint uv_row_stride, jint uv_pixel_stride,
+        jint frame_width, jint frame_height,
+        jint target_size, jdouble blur_threshold)
+    {
+#ifndef HAVE_OPENCV
+        LOGI("preprocessFrame: OpenCV not compiled in — returning null");
+        return nullptr;
+#else
+        YuvPlanes planes;
+        if (!planes.acquire(env, j_y_plane, j_u_plane, j_v_plane))
+        {
+            LOGE("preprocessFrame: GetByteArrayElements returned null");
+            planes.release();
+            return nullptr;
+        }
+
+        cv::Mat bgr = yuv420_to_bgr(
+            planes.y(), y_row_stride,
+            planes.u(), planes.v(),
+            uv_row_stride, uv_pixel_stride,
+            frame_width, frame_height);
+        planes.release();
+
+        const int ts = target_size;
+        const int tensor_len = ts * ts * 3;
+        const int total_len = tensor_len + 4;
+
+        jfloatArray j_result = env->NewFloatArray(total_len);
+        if (!j_result)
+        {
+            LOGE("preprocessFrame: NewFloatArray(%d) failed", total_len);
+            return nullptr;
+        }
+
+        std::vector<float> output(total_len, 0.0f);
+
+        // Step 1: Blur check
+        const double blur_score = compute_blur_score(bgr);
+        if (blur_score < blur_threshold)
+        {
+            output[tensor_len + 0] = 0.0f;
+            output[tensor_len + 1] = 0.0f;
+            output[tensor_len + 2] = 0.0f;
+            output[tensor_len + 3] = 1.0f; // skipped
+            env->SetFloatArrayRegion(j_result, 0, total_len, output.data());
+            LOGI("preprocessFrame: skipped (blur=%.1f < %.1f)",
+                 blur_score, blur_threshold);
+            return j_result;
+        }
+
+        // Step 2: CLAHE
+        apply_clahe(bgr);
+
+        // Step 3: Letterbox resize
+        LetterboxResult lb = letterbox_resize(bgr, ts);
+
+        // Step 4: BGR -> RGB and normalise to [0,1]
+        cv::Mat rgb;
+        cv::cvtColor(lb.mat, rgb, cv::COLOR_BGR2RGB);
+
+        int idx = 0;
+        for (int r = 0; r < ts; ++r)
+        {
+            const uint8_t *row_ptr = rgb.ptr<uint8_t>(r);
+            for (int c = 0; c < ts; ++c)
+            {
+                output[idx++] = row_ptr[c * 3 + 0] / 255.0f;
+                output[idx++] = row_ptr[c * 3 + 1] / 255.0f;
+                output[idx++] = row_ptr[c * 3 + 2] / 255.0f;
+            }
+        }
+
+        output[tensor_len + 0] = static_cast<float>(lb.pad_left);
+        output[tensor_len + 1] = static_cast<float>(lb.pad_top);
+        output[tensor_len + 2] = static_cast<float>(lb.scale);
+        output[tensor_len + 3] = 0.0f; // not skipped
+
+        env->SetFloatArrayRegion(j_result, 0, total_len, output.data());
+        LOGI("preprocessFrame OK: %dx%d -> %dx%d pad=(%d,%d) scale=%.4f blur=%.1f",
+             frame_width, frame_height, ts, ts,
+             lb.pad_left, lb.pad_top, lb.scale, blur_score);
+        return j_result;
 #endif
     }
 

@@ -1,21 +1,21 @@
-import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../core/grid_mapper.dart';
 import '../communication/robot_controller.dart';
 import '../models/app_config.dart';
 import '../models/bin_category.dart';
 import '../models/calibration_config.dart';
+import '../models/detection.dart';
 import '../ui/grid_overlay_painter.dart';
 import '../utils/config_manager.dart';
-import '../utils/image_processor.dart';
 import '../utils/model_manager.dart';
 import '../utils/waste_locator.dart';
+import '../services/detection_service.dart';
 import '../services/esp32_service.dart';
+import '../widgets/detection_overlay.dart';
 import 'bin_setup_screen.dart';
 import 'upload_screen.dart';
 
@@ -54,7 +54,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   String? _cameraError;
 
   // ─── Model ──────────────────────────────────────────────────────────────
-  Interpreter? _interpreter;
+  final DetectionService _detectionService = DetectionService();
   bool _modelReady = false;
   bool _isProcessing = false;
 
@@ -68,6 +68,11 @@ class _DetectionScreenState extends State<DetectionScreen>
   String _detectedLabel = '';
   double _confidence = 0.0;
   BinCategory? _detectedBin;
+  List<Detection> _currentDetections = [];
+
+  // ─── Frame dimensions (updated each inference) ─────────────────────────
+  int _frameWidth = 0;
+  int _frameHeight = 0;
 
   // ─── Spatial / Grid ─────────────────────────────────────────────────────
   /// Active grid position where waste was detected (null when waiting).
@@ -78,11 +83,6 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   // ─── ESP32 ──────────────────────────────────────────────────────────────
   DateTime? _lastEspTransmission;
-
-  // ─── Frame throttle ──────────────────────────────────────────────────────
-  /// Minimum interval between inference runs.  Skip frames that arrive faster.
-  static const int _frameThrottleMs = 300;
-  DateTime? _lastFrameProcessed;
 
   // ─── Animation ───────────────────────────────────────────────────────────
   late AnimationController _pulseController;
@@ -141,14 +141,13 @@ class _DetectionScreenState extends State<DetectionScreen>
   Future<void> _loadModel() async {
     try {
       final modelPath = await ModelManager.getModelPath();
-      final interpreter = Interpreter.fromFile(
-        File(modelPath),
-        options: InterpreterOptions()..threads = 2,
+      await _detectionService.initialize(
+        modelPath: modelPath,
+        labels: _labels,
       );
       if (mounted) {
         setState(() {
-          _interpreter = interpreter;
-          _modelReady = true;
+          _modelReady = _detectionService.isReady;
         });
       }
     } catch (e) {
@@ -206,21 +205,9 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── Inference ───────────────────────────────────────────────────────────
 
   void _onCameraFrame(CameraImage image) {
-    if (_isProcessing ||
-        !_modelReady ||
-        _interpreter == null ||
-        _config == null) {
+    if (_isProcessing || !_modelReady || _config == null) {
       return;
     }
-
-    // Throttle: skip frames that arrive within the cooldown window.
-    final now = DateTime.now();
-    if (_lastFrameProcessed != null &&
-        now.difference(_lastFrameProcessed!).inMilliseconds <
-            _frameThrottleMs) {
-      return;
-    }
-    _lastFrameProcessed = now;
 
     _isProcessing = true;
     _runInference(image);
@@ -228,59 +215,46 @@ class _DetectionScreenState extends State<DetectionScreen>
 
   Future<void> _runInference(CameraImage image) async {
     try {
-      final numClasses = _labels.length;
+      final detections = await _detectionService.processFrame(image);
 
-      // ── Step 1: Scan a 3×3 grid of zones ──────────────────────────────
-      // Each zone carries its true pixel centre (cx, cy), so the winning
-      // zone's position reflects both horizontal and vertical location
-      // in the frame — fixing the bug where cy was always fh/2 and the
-      // grid Y coordinate was permanently stuck at 0.
-      final zones = await ImageProcessor.scanGridZonesAsync(image);
+      // Frame was skipped (throttled, blurry, or not ready).
+      if (detections == null) return;
 
-      // ── Step 2: Run TFLite on each zone; keep the highest-confidence ──
-      final outputBuffer = List<double>.filled(numClasses, 0.0);
-      final output = [outputBuffer];
+      _frameWidth = image.width;
+      _frameHeight = image.height;
 
-      double bestConf = 0.0;
-      int bestLabelIdx = 0;
-      int bestCx = image.width ~/ 2;
-      int bestCy = image.height ~/ 2;
-
-      for (final zone in zones) {
-        // Reset output buffer between runs.
-        for (int i = 0; i < numClasses; i++) {
-          outputBuffer[i] = 0.0;
+      if (detections.isEmpty) {
+        // No detections — go to waiting state.
+        if (mounted && _state != DetectionState.waiting) {
+          setState(() {
+            _state = DetectionState.waiting;
+            _activePosition = null;
+            _wasteLocation = WasteLocation.unknown;
+            _currentDetections = [];
+          });
         }
-
-        final inputBytes = zone.tensor.buffer.asUint8List();
-        _interpreter!.run(inputBytes, output);
-
-        int maxI = 0;
-        double maxP = 0.0;
-        for (int i = 0; i < numClasses; i++) {
-          if (output[0][i] > maxP) {
-            maxP = output[0][i];
-            maxI = i;
-          }
-        }
-
-        if (maxP > bestConf) {
-          bestConf = maxP;
-          bestLabelIdx = maxI;
-          bestCx = zone.cx;
-          bestCy = zone.cy;
-        }
+        return;
       }
 
-      // ── Step 3: Process Results ────────────────────────────────────────
-      final label = bestLabelIdx < _labels.length
-          ? _labels[bestLabelIdx]
-          : 'Unknown';
+      if (mounted) {
+        setState(() {
+          _currentDetections = detections;
+        });
+      }
+
+      // Pick the highest-confidence detection for grid/robot processing.
+      final best = detections.reduce(
+        (a, b) => a.confidence > b.confidence ? a : b,
+      );
+
+      final cx = ((best.box.left + best.box.right) / 2).round();
+      final cy = ((best.box.top + best.box.bottom) / 2).round();
+
       _processResult(
-        label,
-        bestConf,
-        bestCx,
-        bestCy,
+        best.label,
+        best.confidence,
+        cx,
+        cy,
         image.width,
         image.height,
       );
@@ -491,6 +465,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     ]);
 
     await _loadConfig();
+    _detectionService.resetSmoother();
     _cameraController?.startImageStream(_onCameraFrame);
   }
 
@@ -499,7 +474,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     _pulseController.dispose();
     _cameraController?.stopImageStream();
     _cameraController?.dispose();
-    _interpreter?.close();
+    _detectionService.dispose();
     // Restore all orientations when leaving the detection screen so that
     // other screens (upload, bin setup) are not locked to landscape.
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -540,6 +515,12 @@ class _DetectionScreenState extends State<DetectionScreen>
                 fit: StackFit.expand,
                 children: [
                   CameraPreview(_cameraController!),
+                  if (_currentDetections.isNotEmpty && _frameWidth > 0)
+                    DetectionOverlay(
+                      detections: _currentDetections,
+                      frameWidth: _frameWidth,
+                      frameHeight: _frameHeight,
+                    ),
                   Grid8x8Overlay(
                     activePosition: _activePosition,
                     accentColor: accent,

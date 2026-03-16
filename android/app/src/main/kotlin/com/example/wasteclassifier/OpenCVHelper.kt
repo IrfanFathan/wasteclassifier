@@ -115,4 +115,27 @@ object OpenCVHelper {
         rows: Int,
         targetSize: Int,
     ): FloatArray?
+
+    /**
+     * Full-frame preprocessing: blur check → CLAHE → letterbox resize → normalise.
+     *
+     * Returns a FloatArray of length [targetSize]×[targetSize]×3 + 4 metadata
+     * values appended at the tail:
+     *   [N+0] = padLeft, [N+1] = padTop, [N+2] = scale, [N+3] = skipped (1.0/0.0)
+     *
+     * @param blurThreshold Laplacian variance threshold; frames below this are skipped.
+     * @return FloatArray with tensor + metadata, or `null` if the native call fails.
+     */
+    external fun preprocessFrame(
+        yPlane: ByteArray,
+        uPlane: ByteArray,
+        vPlane: ByteArray,
+        yRowStride: Int,
+        uvRowStride: Int,
+        uvPixelStride: Int,
+        frameWidth: Int,
+        frameHeight: Int,
+        targetSize: Int,
+        blurThreshold: Double,
+    ): FloatArray?
 }
