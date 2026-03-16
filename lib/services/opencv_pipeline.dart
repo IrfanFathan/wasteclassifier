@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -46,21 +44,18 @@ class OpenCVPipeline {
       final uPlane = image.planes[1];
       final vPlane = image.planes[2];
 
-      final raw = await _channel.invokeMethod<Float32List>(
-        'preprocess_frame',
-        {
-          'y_plane': yPlane.bytes,
-          'u_plane': uPlane.bytes,
-          'v_plane': vPlane.bytes,
-          'y_row_stride': yPlane.bytesPerRow,
-          'uv_row_stride': uPlane.bytesPerRow,
-          'uv_pixel_stride': uPlane.bytesPerPixel ?? 1,
-          'width': image.width,
-          'height': image.height,
-          'target_size': kInputSize,
-          'blur_threshold': kBlurSkipThreshold,
-        },
-      );
+      final raw = await _channel.invokeMethod<Float32List>('preprocess_frame', {
+        'y_plane': yPlane.bytes,
+        'u_plane': uPlane.bytes,
+        'v_plane': vPlane.bytes,
+        'y_row_stride': yPlane.bytesPerRow,
+        'uv_row_stride': uPlane.bytesPerRow,
+        'uv_pixel_stride': uPlane.bytesPerPixel ?? 1,
+        'width': image.width,
+        'height': image.height,
+        'target_size': kInputSize,
+        'blur_threshold': kBlurSkipThreshold,
+      });
 
       if (raw == null) {
         _nativeReady = false;

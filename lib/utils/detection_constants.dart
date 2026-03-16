@@ -1,7 +1,7 @@
-/// Centralised constants for the detection pipeline.
-///
-/// All tuneable thresholds and paths live here so they can be adjusted
-/// without hunting through multiple files.
+// Centralised constants for the detection pipeline.
+//
+// All tuneable thresholds and paths live here so they can be adjusted
+// without hunting through multiple files.
 
 const double kConfidenceThreshold = 0.40;
 const double kNmsIouThreshold = 0.45;

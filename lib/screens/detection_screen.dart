@@ -141,10 +141,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   Future<void> _loadModel() async {
     try {
       final modelPath = await ModelManager.getModelPath();
-      await _detectionService.initialize(
-        modelPath: modelPath,
-        labels: _labels,
-      );
+      await _detectionService.initialize(modelPath: modelPath, labels: _labels);
       if (mounted) {
         setState(() {
           _modelReady = _detectionService.isReady;

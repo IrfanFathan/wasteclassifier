@@ -57,8 +57,8 @@ class DetectionSmoother {
         group.map((d) => d.box.right).reduce((a, b) => a + b) / group.length;
     final avgBottom =
         group.map((d) => d.box.bottom).reduce((a, b) => a + b) / group.length;
-    final avgConf = group.map((d) => d.confidence).reduce((a, b) => a + b) /
-        group.length;
+    final avgConf =
+        group.map((d) => d.confidence).reduce((a, b) => a + b) / group.length;
 
     return Detection(
       box: Rect.fromLTRB(avgLeft, avgTop, avgRight, avgBottom),
@@ -67,8 +67,7 @@ class DetectionSmoother {
     );
   }
 
-  String _findMatchingKey(
-      Map<String, List<Detection>> groups, Detection det) {
+  String _findMatchingKey(Map<String, List<Detection>> groups, Detection det) {
     for (final entry in groups.entries) {
       if (entry.value.isNotEmpty &&
           entry.value.last.label == det.label &&

@@ -44,7 +44,9 @@ class ModelManager {
     final zipFile = File(zipPath);
     if (!zipFile.existsSync()) {
       return ZipExtractResult(
-          success: false, error: 'ZIP file not found at path.');
+        success: false,
+        error: 'ZIP file not found at path.',
+      );
     }
 
     // Read and decode the ZIP archive
@@ -75,19 +77,22 @@ class ModelManager {
     if (!foundModel && !foundLabels) {
       return ZipExtractResult(
         success: false,
-        error: 'No model.tflite or labels.txt found in the ZIP.\n'
+        error:
+            'No model.tflite or labels.txt found in the ZIP.\n'
             'Make sure you export "TensorFlow Lite → Floating Point" from Teachable Machine.',
       );
     }
     if (!foundModel) {
       return ZipExtractResult(
-          success: false,
-          error: 'labels.txt found but model.tflite is missing from the ZIP.');
+        success: false,
+        error: 'labels.txt found but model.tflite is missing from the ZIP.',
+      );
     }
     if (!foundLabels) {
       return ZipExtractResult(
-          success: false,
-          error: 'model.tflite found but labels.txt is missing from the ZIP.');
+        success: false,
+        error: 'model.tflite found but labels.txt is missing from the ZIP.',
+      );
     }
 
     return ZipExtractResult(success: true);
@@ -101,14 +106,17 @@ class ModelManager {
     if (!file.existsSync()) return [];
     final raw = await file.readAsString();
     final lines = raw.split(RegExp(r'\r\n|\r|\n'));
-    return lines.map((line) {
-      final trimmed = line.trim();
-      final parts = trimmed.split(RegExp(r'\s+'));
-      if (parts.length > 1 && int.tryParse(parts[0]) != null) {
-        return parts.sublist(1).join(' ');
-      }
-      return trimmed;
-    }).where((l) => l.isNotEmpty).toList();
+    return lines
+        .map((line) {
+          final trimmed = line.trim();
+          final parts = trimmed.split(RegExp(r'\s+'));
+          if (parts.length > 1 && int.tryParse(parts[0]) != null) {
+            return parts.sublist(1).join(' ');
+          }
+          return trimmed;
+        })
+        .where((l) => l.isNotEmpty)
+        .toList();
   }
 
   static Future<void> deleteModelFiles() async {

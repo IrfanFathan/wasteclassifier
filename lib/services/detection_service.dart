@@ -86,10 +86,8 @@ class DetectionService {
     if (_interpreter == null) return null;
 
     try {
-      final inputTensor = _interpreter!.getInputTensor(0);
       final outputTensor = _interpreter!.getOutputTensor(0);
 
-      final inputShape = inputTensor.shape; // [1, 640, 640, 3]
       final outputShape = outputTensor.shape; // [1, N, C] or [1, C, N]
 
       // Prepare input as Float32List

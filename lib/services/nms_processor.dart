@@ -85,11 +85,15 @@ class NmsProcessor {
 
       if (clampedX2 <= clampedX1 || clampedY2 <= clampedY1) continue;
 
-      candidates.add(Detection(
-        box: Rect.fromLTRB(clampedX1, clampedY1, clampedX2, clampedY2),
-        label: bestClassIdx < labels.length ? labels[bestClassIdx] : 'Unknown',
-        confidence: finalScore,
-      ));
+      candidates.add(
+        Detection(
+          box: Rect.fromLTRB(clampedX1, clampedY1, clampedX2, clampedY2),
+          label: bestClassIdx < labels.length
+              ? labels[bestClassIdx]
+              : 'Unknown',
+          confidence: finalScore,
+        ),
+      );
     }
 
     return _applyNMS(candidates, iouThreshold: iouThreshold);

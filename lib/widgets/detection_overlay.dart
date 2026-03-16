@@ -2,7 +2,6 @@ import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../models/detection.dart';
 
@@ -104,17 +103,19 @@ class _DetectionPainter extends CustomPainter {
       );
 
       // Draw label badge
-      final labelText = '${det.label} ${(det.confidence * 100).toStringAsFixed(0)}%';
+      final labelText =
+          '${det.label} ${(det.confidence * 100).toStringAsFixed(0)}%';
       final textStyle = ui.TextStyle(
         color: Colors.white,
         fontSize: 12,
         fontWeight: FontWeight.bold,
       );
-      final paragraphBuilder = ui.ParagraphBuilder(
-        ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
-      )
-        ..pushStyle(textStyle)
-        ..addText(labelText);
+      final paragraphBuilder =
+          ui.ParagraphBuilder(
+              ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
+            )
+            ..pushStyle(textStyle)
+            ..addText(labelText);
       final paragraph = paragraphBuilder.build()
         ..layout(ui.ParagraphConstraints(width: size.width));
 
