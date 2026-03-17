@@ -1,7 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/app_config.dart';
 import '../models/bin_category.dart';
@@ -37,28 +36,57 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
   static const Color _bgSurface = Color(0x0CFFFFFF); // ~5% white
   static const Color _borderSubtle = Color(0x1AFFFFFF); // ~10% white
 
+  static const String _paperBinId = 'bin_paper';
+  static const String _plasticBinId = 'bin_plastic';
+
+  static final List<BinCategory> _defaultBins = [
+    BinCategory(
+      id: _paperBinId,
+      name: 'Paper',
+      emoji: '📰',
+      colorHex: const Color(0xFFFFA726).toARGB32(),
+      mappedLabels: [],
+    ),
+    BinCategory(
+      id: _plasticBinId,
+      name: 'Plastic',
+      emoji: '♻️',
+      colorHex: const Color(0xFF42A5F5).toARGB32(),
+      mappedLabels: [],
+    ),
+  ];
+
   @override
   void initState() {
     super.initState();
     // Enforce portrait mode for the Waste Creation screen
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
+    _bins = _defaultBins.map((b) => b.copyWith()).toList();
+
     if (widget.existingConfig != null) {
       final config = widget.existingConfig!;
-      _bins = List.from(config.bins.map((b) => b.copyWith()));
       _confidenceThreshold = config.confidenceThreshold;
-      // Restore label assignments
+      // Restore label assignments from existing config
       for (final label in widget.labels) {
         if (config.nothingLabels
             .any((n) => n.toLowerCase() == label.toLowerCase())) {
           _labelAssignments[label] = _nothingOption;
         } else {
           String? foundBinId;
-          for (final bin in _bins) {
+          for (final bin in config.bins) {
             if (bin.mappedLabels
                 .any((m) => m.toLowerCase() == label.toLowerCase())) {
-              foundBinId = bin.id;
-              break;
+              // Map old bin assignments to fixed bin IDs
+              final nameLower = bin.name.toLowerCase();
+              if (nameLower == 'paper') {
+                foundBinId = _paperBinId;
+              } else if (nameLower == 'plastic') {
+                foundBinId = _plasticBinId;
+              } else if (bin.id == _paperBinId || bin.id == _plasticBinId) {
+                foundBinId = bin.id;
+              }
+              if (foundBinId != null) break;
             }
           }
           _labelAssignments[label] = foundBinId;
@@ -71,229 +99,7 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
     }
   }
 
-  String _generateBinId() => 'bin_${DateTime.now().millisecondsSinceEpoch}';
-
-  void _showAddEditBinSheet({BinCategory? existing}) {
-    final nameController = TextEditingController(text: existing?.name ?? '');
-    final emojiController = TextEditingController(text: existing?.emoji ?? '♻️');
-    // Pre-select white if no color is provided to look better in dark mode
-    Color pickedColor = existing != null ? Color(existing.colorHex) : Colors.white;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return StatefulBuilder(builder: (ctx, setSheetState) {
-          return ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E1E1E).withValues(alpha: 0.8),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-                  border: const Border(
-                    top: BorderSide(color: Colors.white24, width: 1),
-                  ),
-                ),
-                padding: EdgeInsets.only(
-                  left: 24,
-                  right: 24,
-                  top: 12,
-                  bottom: MediaQuery.of(ctx).viewInsets.bottom + 32,
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Pull handle
-                      Center(
-                        child: Container(
-                          width: 40,
-                          height: 4,
-                          margin: const EdgeInsets.only(bottom: 24),
-                          decoration: BoxDecoration(
-                            color: Colors.white24,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                      ),
-                      Text(
-                        existing == null ? 'Add New Bin' : 'Edit Bin',
-                        style: GoogleFonts.inter(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      
-                      // Input fields encapsulated in a glass card
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.black26,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: Column(
-                          children: [
-                            TextField(
-                              controller: nameController,
-                              style: GoogleFonts.inter(color: Colors.white),
-                              decoration: _inputDecoration('Bin Name (e.g. Plastic)'),
-                            ),
-                            const SizedBox(height: 16),
-                            TextField(
-                              controller: emojiController,
-                              style: GoogleFonts.inter(color: Colors.white, fontSize: 24),
-                              decoration: _inputDecoration('Emoji (e.g. ♻️)'),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-
-                      Text(
-                        'Bin Color',
-                        style: GoogleFonts.inter(
-                          color: Colors.white60,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Container(
-                        height: 180,
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.black26,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: MaterialPicker(
-                          pickerColor: pickedColor,
-                          onColorChanged: (c) => setSheetState(() => pickedColor = c),
-                          enableLabel: false,
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-
-                      // Action Buttons
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(ctx),
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                side: const BorderSide(color: Colors.white24),
-                              ),
-                              child: Text('Cancel', style: GoogleFonts.inter(color: Colors.white70)),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFF00E676), Color(0xFF1DE9B6)],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(0xFF00E676).withValues(alpha: 0.3),
-                                    blurRadius: 12,
-                                    offset: const Offset(0, 4),
-                                  )
-                                ],
-                              ),
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  final name = nameController.text.trim();
-                                  if (name.isEmpty) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        backgroundColor: const Color(0xFFFF5252),
-                                        content: Text('Bin name cannot be empty', style: GoogleFonts.inter()),
-                                      ),
-                                    );
-                                    return;
-                                  }
-                                  final emoji = emojiController.text.trim().isNotEmpty
-                                      ? emojiController.text.trim()
-                                      : '🗑️';
-                                  setState(() {
-                                    if (existing == null) {
-                                      _bins.add(BinCategory(
-                                        id: _generateBinId(),
-                                        name: name,
-                                        emoji: emoji,
-                                        colorHex: pickedColor.toARGB32(),
-                                        mappedLabels: [],
-                                      ));
-                                    } else {
-                                      final idx = _bins.indexWhere((b) => b.id == existing.id);
-                                      if (idx != -1) {
-                                        _bins[idx] = existing.copyWith(
-                                          name: name,
-                                          emoji: emoji,
-                                          colorHex: pickedColor.toARGB32(),
-                                        );
-                                      }
-                                    }
-                                  });
-                                  Navigator.pop(ctx);
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.transparent,
-                                  shadowColor: Colors.transparent,
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                ),
-                                child: Text('Save', style: GoogleFonts.inter(color: Colors.black87, fontWeight: FontWeight.w700)),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        });
-      },
-    );
-  }
-
-  void _deleteBin(String binId) {
-    setState(() {
-      _bins.removeWhere((b) => b.id == binId);
-      for (final key in _labelAssignments.keys.toList()) {
-        if (_labelAssignments[key] == binId) {
-          _labelAssignments[key] = null;
-        }
-      }
-    });
-  }
-
   Future<void> _saveAndNavigate() async {
-    if (_bins.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.orange.shade800,
-          content: Text('⚠️ Please create at least one bin.', style: GoogleFonts.inter()),
-        ),
-      );
-      return;
-    }
-
     final mappedCount = _labelAssignments.values
         .where((v) => v != null && v != _nothingOption)
         .length;
@@ -336,26 +142,6 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
       MaterialPageRoute(builder: (_) => const DetectionScreen()),
     );
   }
-
-  InputDecoration _inputDecoration(String hint) => InputDecoration(
-        hintText: hint,
-        hintStyle: GoogleFonts.inter(color: Colors.white38),
-        filled: true,
-        fillColor: Colors.black45,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.white10),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.white10),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _accentGreen, width: 1.5),
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      );
 
   @override
   Widget build(BuildContext context) {
@@ -418,34 +204,7 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
                     // ── Your Bins ──
                     _buildSectionHeader('Your Bins', Icons.delete_outline),
                     const SizedBox(height: 16),
-                    if (_bins.isEmpty) _buildExampleHintCard(),
                     ..._bins.map((bin) => _buildBinTile(bin)),
-                    
-                    const SizedBox(height: 12),
-                    GestureDetector(
-                      onTap: () => _showAddEditBinSheet(),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        decoration: BoxDecoration(
-                          color: _accentGreen.withValues(alpha: 0.05),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: _accentGreen.withValues(alpha: 0.3), width: 1.5),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.add_rounded, color: _accentGreen),
-                            const SizedBox(width: 8),
-                            Text('Add New Bin',
-                                style: GoogleFonts.inter(
-                                    color: _accentGreen,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 15)),
-                          ],
-                        ),
-                      ),
-                    ),
 
                     const SizedBox(height: 40),
                     
@@ -616,56 +375,8 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
     );
   }
 
-  Widget _buildExampleHintCard() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: _bgSurface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _borderSubtle),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.lightbulb_outline, color: _accentCyan, size: 20),
-              const SizedBox(width: 8),
-              Text('Example Setup', style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _hintLine('♻️ Plastic Bin', 'Bottle, Bag, Wrapper', Colors.blue),
-          const SizedBox(height: 8),
-          _hintLine('📰 Paper Bin', 'Newspaper, Cardboard', Colors.orange),
-        ],
-      ),
-    );
-  }
-
-  Widget _hintLine(String binName, String labels, MaterialColor color) {
-    return Row(
-      children: [
-        Container(
-          width: 8, height: 8,
-          decoration: BoxDecoration(shape: BoxShape.circle, color: color.shade400),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(binName, style: GoogleFonts.inter(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-              Text(labels, style: GoogleFonts.inter(color: Colors.white38, fontSize: 12)),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildBinTile(BinCategory bin) {
+    final mappedCount = _labelAssignments.values.where((v) => v == bin.id).length;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -686,20 +397,7 @@ class _BinSetupScreenState extends State<BinSetupScreen> {
           child: Text(bin.emoji, style: const TextStyle(fontSize: 20)),
         ),
         title: Text(bin.name, style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16)),
-        subtitle: Text('${bin.mappedLabels.length} items mapped', style: GoogleFonts.inter(color: Colors.white38, fontSize: 12)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.edit_rounded, color: Colors.white54, size: 20),
-              onPressed: () => _showAddEditBinSheet(existing: bin),
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_rounded, color: Color(0xFFFF5252), size: 20),
-              onPressed: () => _deleteBin(bin.id),
-            ),
-          ],
-        ),
+        subtitle: Text('$mappedCount labels assigned', style: GoogleFonts.inter(color: Colors.white38, fontSize: 12)),
       ),
     );
   }

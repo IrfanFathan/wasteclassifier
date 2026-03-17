@@ -13,6 +13,9 @@ class Esp32Service {
   static const String esp32Ip = '192.168.4.1';
   static const String baseUrl = 'http://$esp32Ip';
 
+  /// Maps fixed bin IDs to the integer codes expected by the ESP32 /update endpoint.
+  static const Map<String, int> binTypeMap = {'bin_paper': 0, 'bin_plastic': 1};
+
   bool _isConnected = false;
   bool get isConnected => _isConnected;
 
@@ -119,6 +122,33 @@ class Esp32Service {
           .timeout(const Duration(seconds: 2));
 
       return response.statusCode == 200;
+    } catch (e) {
+      _isConnected = false;
+      return false;
+    }
+  }
+
+  /// Sends a bin classification update to the ESP32 /update endpoint.
+  ///
+  /// [binType] must be 0 (paper) or 1 (plastic).
+  /// Returns `true` on successful acknowledgement, `false` on any failure.
+  Future<bool> sendBinUpdate(int binType) async {
+    if (!_isConnected) return false;
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/update'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'bin_type': binType}),
+          )
+          .timeout(const Duration(seconds: 2));
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return body['status'] == 'success';
+      }
+      return false;
     } catch (e) {
       _isConnected = false;
       return false;

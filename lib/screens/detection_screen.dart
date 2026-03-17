@@ -370,21 +370,24 @@ class _DetectionScreenState extends State<DetectionScreen>
       if (matchedBin != null) {
         _state = DetectionState.detected;
         _detectedBin = matchedBin;
-        _transmitToEsp32(label, matchedBin, confidence, location, gridPos);
       } else {
         _state = DetectionState.unmapped;
         _detectedBin = null;
       }
     });
+
+    if (matchedBin != null) {
+      _transmitToEsp32(label, matchedBin, confidence, location, gridPos);
+    }
   }
 
-  void _transmitToEsp32(
+  Future<void> _transmitToEsp32(
     String label,
     BinCategory bin,
     double confidence,
     WasteLocation location,
     GridPosition gridPos,
-  ) {
+  ) async {
     if (!Esp32Service().isConnected) return;
 
     // Throttle transmissions to once per second so we don't spam the ESP32
@@ -395,7 +398,33 @@ class _DetectionScreenState extends State<DetectionScreen>
     }
     _lastEspTransmission = now;
 
-    // Send waste classification data.
+    // 1. Send bin classification update to /update endpoint.
+    final binType = Esp32Service.binTypeMap[bin.id];
+    if (binType != null) {
+      final success = await Esp32Service().sendBinUpdate(binType);
+      if (success) {
+        debugPrint('ESP32 /update: bin_type=$binType (${bin.name}) confirmed');
+      } else {
+        debugPrint('ESP32 /update: failed for bin_type=$binType');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFFFF5252),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+              content: Text(
+                'ESP32 update failed',
+                style: GoogleFonts.inter(
+                    color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    // 2. Send full waste data for dashboard (existing).
     Esp32Service().sendWasteData(
       label: label,
       binId: bin.id,
@@ -410,7 +439,7 @@ class _DetectionScreenState extends State<DetectionScreen>
       pixelY: gridPos.pixelY,
     );
 
-    // Also send the structured grid command for robotic arm.
+    // 3. Send structured grid command for robotic arm (existing).
     final command = RobotController.createRobotCommand(gridPos);
     Esp32Service().sendRobotCommand(command);
   }

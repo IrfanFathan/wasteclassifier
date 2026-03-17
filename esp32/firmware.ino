@@ -268,6 +268,56 @@ void handleDataPost() {
   Serial.println(lastPayload);
 }
 
+void handleUpdatePost() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No body\"}");
+    return;
+  }
+
+  String body = server.arg("plain");
+
+  StaticJsonDocument<128> doc;
+  DeserializationError err = deserializeJson(doc, body);
+
+  if (err) {
+    Serial.print("JSON parse error: ");
+    Serial.println(err.c_str());
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON\"}");
+    return;
+  }
+
+  if (!doc.containsKey("bin_type")) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing bin_type\"}");
+    return;
+  }
+
+  int binType = doc["bin_type"].as<int>();
+
+  if (binType != 0 && binType != 1) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid bin_type\"}");
+    return;
+  }
+
+  // Process the bin classification.
+  // TODO: Actuate servo, relay, LED, etc. based on binType.
+  const char* binName = (binType == 0) ? "Paper" : "Plastic";
+  Serial.print("Bin Update: ");
+  Serial.print(binName);
+  Serial.print(" (bin_type=");
+  Serial.print(binType);
+  Serial.println(")");
+
+  lastUpdate = millis();
+
+  String response = "{\"status\":\"success\",\"bin_type\":";
+  response += String(binType);
+  response += ",\"bin_name\":\"";
+  response += binName;
+  response += "\"}";
+
+  server.send(200, "application/json", response);
+}
+
 void handleLatestData() {
   // Serve the last received payload to the dashboard UI
   server.send(200, "application/json", lastPayload);
@@ -290,6 +340,7 @@ void setup() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/ping", HTTP_GET, handlePing);
   server.on("/data", HTTP_POST, handleDataPost);
+  server.on("/update", HTTP_POST, handleUpdatePost);
   server.on("/api/latest", HTTP_GET, handleLatestData);
   
   // Start server
