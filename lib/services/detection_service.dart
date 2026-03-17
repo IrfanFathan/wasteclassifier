@@ -92,7 +92,6 @@ class DetectionService {
 
       // Prepare input as Float32List
       final input = Float32List.fromList(floatData);
-      final inputBuffer = input.buffer.asUint8List();
 
       // Determine output dimensions
       // YOLO11n outputs [1, 4+numClasses, 8400] (transposed) or [1, 8400, 4+numClasses]
@@ -121,7 +120,7 @@ class DetectionService {
       );
       final output = [outputBuffer];
 
-      _interpreter!.run(inputBuffer, output);
+      _interpreter!.run([input], output);
 
       // Reshape to [numPredictions][numFeatures]
       final result = List.generate(numPredictions, (i) {

@@ -202,7 +202,7 @@ class _DetectionScreenState extends State<DetectionScreen>
   // ─── Inference ───────────────────────────────────────────────────────────
 
   void _onCameraFrame(CameraImage image) {
-    if (_isProcessing || !_modelReady || _config == null) {
+    if (_isProcessing || !_modelReady) {
       return;
     }
 
@@ -275,7 +275,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     int fh,
   ) {
     if (!mounted) return;
-    final config = _config!;
+    final config = _config;
+    if (config == null) return;
 
     // Below threshold → waiting.
     if (confidence < config.confidenceThreshold) {
