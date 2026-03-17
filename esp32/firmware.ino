@@ -3,8 +3,8 @@
 #include <ArduinoJson.h>
 
 // ─── Network Credentials ──────────────────────────
-const char* ssid = "WESTO_BIN_01";
-const char* password = "password123";
+const char *ssid = "WESTO_BIN_01";
+const char *password = "password123";
 
 // ─── Web Server ───────────────────────────────────
 WebServer server(80);
@@ -15,7 +15,7 @@ unsigned long lastUpdate = 0;
 
 // ─── HTML Dashboard ───────────────────────────────
 // A sleek, dark dashboard matching the Flutter app's aesthetics
-const char* htmlDashboard = R"rawliteral(
+const char *htmlDashboard = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -243,33 +243,39 @@ const char* htmlDashboard = R"rawliteral(
 
 // ─── Handlers ─────────────────────────────────────
 
-void handleRoot() {
+void handleRoot()
+{
   server.send(200, "text/html", htmlDashboard);
 }
 
-void handlePing() {
+void handlePing()
+{
   // Simple check for the app connection screen
   server.send(200, "text/plain", "pong");
 }
 
-void handleDataPost() {
-  if (server.hasArg("plain") == false) {
+void handleDataPost()
+{
+  if (server.hasArg("plain") == false)
+  {
     server.send(400, "text/plain", "Body not received");
     return;
   }
-  
+
   // Store payload
   lastPayload = server.arg("plain");
   lastUpdate = millis();
-  
+
   // Acknowledge receipt
   server.send(200, "application/json", "{\"status\":\"success\"}");
   Serial.println("Received Payload:");
   Serial.println(lastPayload);
 }
 
-void handleUpdatePost() {
-  if (!server.hasArg("plain")) {
+void handleUpdatePost()
+{
+  if (!server.hasArg("plain"))
+  {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No body\"}");
     return;
   }
@@ -279,28 +285,31 @@ void handleUpdatePost() {
   StaticJsonDocument<128> doc;
   DeserializationError err = deserializeJson(doc, body);
 
-  if (err) {
+  if (err)
+  {
     Serial.print("JSON parse error: ");
     Serial.println(err.c_str());
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON\"}");
     return;
   }
 
-  if (!doc.containsKey("bin_type")) {
+  if (!doc.containsKey("bin_type"))
+  {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing bin_type\"}");
     return;
   }
 
   int binType = doc["bin_type"].as<int>();
 
-  if (binType != 0 && binType != 1) {
+  if (binType != 0 && binType != 1)
+  {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid bin_type\"}");
     return;
   }
 
   // Process the bin classification.
   // TODO: Actuate servo, relay, LED, etc. based on binType.
-  const char* binName = (binType == 0) ? "Paper" : "Plastic";
+  const char *binName = (binType == 0) ? "Paper" : "Plastic";
   Serial.print("Bin Update: ");
   Serial.print(binName);
   Serial.print(" (bin_type=");
@@ -318,37 +327,40 @@ void handleUpdatePost() {
   server.send(200, "application/json", response);
 }
 
-void handleLatestData() {
+void handleLatestData()
+{
   // Serve the last received payload to the dashboard UI
   server.send(200, "application/json", lastPayload);
 }
 
 // ─── Setup & Loop ─────────────────────────────────
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
-  
+
   // Start Access Point
   Serial.println("Starting SoftAP...");
   WiFi.softAP(ssid, password);
-  
+
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(IP); // Usually 192.168.4.1
-  
+
   // Routing
   server.on("/", HTTP_GET, handleRoot);
   server.on("/ping", HTTP_GET, handlePing);
   server.on("/data", HTTP_POST, handleDataPost);
   server.on("/update", HTTP_POST, handleUpdatePost);
   server.on("/api/latest", HTTP_GET, handleLatestData);
-  
+
   // Start server
   server.begin();
   Serial.println("HTTP server started");
 }
 
-void loop() {
+void loop()
+{
   server.handleClient();
   delay(10);
 }
