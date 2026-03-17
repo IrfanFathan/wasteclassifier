@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../models/detection.dart';
+import '../utils/detection_constants.dart';
 
 // ─── Color palette ─────────────────────────────────────────────────────────
 
@@ -14,10 +15,10 @@ const _colors = [
   Color(0xFFFFD740), // amber
   Color(0xFFE040FB), // purple
   Color(0xFF18FFFF), // teal
-  Color(0xFFFF6E40), // deep orange
   Color(0xFF69F0AE), // light green
   Color(0xFF40C4FF), // light blue
   Color(0xFFFF4081), // pink
+  Color(0xFFFF6E40), // deep orange
 ];
 
 Color _colorForLabel(String label, Map<String, int> indexMap) {
@@ -27,14 +28,29 @@ Color _colorForLabel(String label, Map<String, int> indexMap) {
   return _colors[indexMap[label]! % _colors.length];
 }
 
+// ─── Tracked detection entry ────────────────────────────────────────────────
+
+/// A single detection being tracked with its animation controller.
+class _TrackedDetection {
+  Detection det;
+  final AnimationController ctrl;
+  bool leaving;
+
+  _TrackedDetection({
+    required this.det,
+    required this.ctrl,
+    this.leaving = false,
+  });
+}
+
 // ─── Public widget ─────────────────────────────────────────────────────────
 
 /// Overlay that renders animated bounding boxes and label badges for detected
 /// objects on top of the camera preview.
 ///
-/// Each unique label fades **in** over 150 ms and **out** over 300 ms using an
-/// [AnimationController] per label so that boxes appear/disappear smoothly
-/// rather than snapping on/off.
+/// Each detection fades **in** over 150 ms and **out** over 300 ms.
+/// Multiple instances of the same label are each tracked independently
+/// by IoU matching (threshold: [kSmootherMatchIou]).
 class DetectionOverlay extends StatefulWidget {
   /// Current detections to render (already in original frame coordinates).
   final List<Detection> detections;
@@ -58,57 +74,88 @@ class DetectionOverlay extends StatefulWidget {
 
 class _DetectionOverlayState extends State<DetectionOverlay>
     with TickerProviderStateMixin {
-  // Per-label animation controllers (fade in / fade out).
-  final Map<String, AnimationController> _controllers = {};
-  // Stable label → color index mapping so colors don't change as detections
-  // come and go.
-  final Map<String, int> _colorIndex = {};
+  /// All currently tracked detections (including those fading out).
+  final List<_TrackedDetection> _tracked = [];
 
-  // The most-recent detection snapshot keyed by label (used when painting
-  // the box during fade-out, after the label has left widget.detections).
-  final Map<String, Detection> _lastSeen = {};
+  /// Stable label → color index mapping so colors don't jump.
+  final Map<String, int> _colorIndex = {};
 
   @override
   void didUpdateWidget(DetectionOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _reconcile(widget.detections);
+  }
 
-    final activeLabels = <String>{};
-    for (final det in widget.detections) {
-      activeLabels.add(det.label);
-      _lastSeen[det.label] = det;
+  /// Match incoming detections to existing tracked entries by IoU + label,
+  /// start fade-ins for new arrivals, and fade-out departures.
+  void _reconcile(List<Detection> incoming) {
+    final matched = List<bool>.filled(_tracked.length, false);
+    final incomingMatched = List<bool>.filled(incoming.length, false);
 
-      // Ensure a controller exists for this label.
-      _controllers.putIfAbsent(det.label, () {
-        _colorForLabel(det.label, _colorIndex); // register color slot
-        return AnimationController(
-          vsync: this,
-          duration: const Duration(milliseconds: 150),
-          reverseDuration: const Duration(milliseconds: 300),
-        );
-      });
+    // Match incoming to tracked by same label + IoU ≥ threshold.
+    for (int i = 0; i < incoming.length; i++) {
+      final det = incoming[i];
+      double bestIou = kSmootherMatchIou; // minimum threshold
+      int bestIdx = -1;
 
-      // Animate to visible.
-      final ctrl = _controllers[det.label]!;
-      if (!ctrl.isAnimating && ctrl.value < 1.0) {
-        ctrl.forward();
+      for (int j = 0; j < _tracked.length; j++) {
+        if (matched[j]) continue;
+        if (_tracked[j].det.label != det.label) continue;
+        final iou = _iou(_tracked[j].det.box, det.box);
+        if (iou >= bestIou) {
+          bestIou = iou;
+          bestIdx = j;
+        }
+      }
+
+      if (bestIdx >= 0) {
+        // Update the existing entry with the fresh detection.
+        matched[bestIdx] = true;
+        incomingMatched[i] = true;
+        _tracked[bestIdx].det = det;
+        _tracked[bestIdx].leaving = false;
+        final ctrl = _tracked[bestIdx].ctrl;
+        if (!ctrl.isAnimating && ctrl.value < 1.0) ctrl.forward();
       }
     }
 
-    // Fade out labels that have disappeared.
-    for (final label in _controllers.keys) {
-      if (!activeLabels.contains(label)) {
-        final ctrl = _controllers[label]!;
+    // Unmatched tracked → start fade-out.
+    for (int j = 0; j < _tracked.length; j++) {
+      if (!matched[j] && !_tracked[j].leaving) {
+        _tracked[j].leaving = true;
+        final ctrl = _tracked[j].ctrl;
         if (!ctrl.isAnimating && ctrl.value > 0.0) {
-          ctrl.reverse();
+          ctrl.reverse().then((_) {
+            if (mounted)
+              setState(
+                () => _tracked.removeWhere(
+                  (t) => t.leaving && t.ctrl.value == 0.0,
+                ),
+              );
+          });
         }
       }
+    }
+
+    // Unmatched incoming → create new tracked entry and fade in.
+    for (int i = 0; i < incoming.length; i++) {
+      if (incomingMatched[i]) continue;
+      final det = incoming[i];
+      _colorForLabel(det.label, _colorIndex); // register color slot
+      final ctrl = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 150),
+        reverseDuration: const Duration(milliseconds: 300),
+      );
+      _tracked.add(_TrackedDetection(det: det, ctrl: ctrl));
+      ctrl.forward();
     }
   }
 
   @override
   void dispose() {
-    for (final ctrl in _controllers.values) {
-      ctrl.dispose();
+    for (final t in _tracked) {
+      t.ctrl.dispose();
     }
     super.dispose();
   }
@@ -124,68 +171,70 @@ class _DetectionOverlayState extends State<DetectionOverlay>
         final scaleX = constraints.maxWidth / widget.frameWidth;
         final scaleY = constraints.maxHeight / widget.frameHeight;
 
-        final boxes = <Widget>[];
-
-        for (final entry in _controllers.entries) {
-          final label = entry.key;
-          final ctrl = entry.value;
-          final det = _lastSeen[label];
-          if (det == null) continue;
-
-          final color = _colorForLabel(label, _colorIndex);
-
-          boxes.add(
-            AnimatedBuilder(
-              animation: ctrl,
+        return Stack(
+          children: _tracked.map((t) {
+            final color = _colorForLabel(t.det.label, _colorIndex);
+            return AnimatedBuilder(
+              animation: t.ctrl,
               builder: (context, _) {
-                final opacity = ctrl.value;
+                final opacity = t.ctrl.value;
                 if (opacity <= 0) return const SizedBox.shrink();
 
-                final left = det.box.left * scaleX;
-                final top = det.box.top * scaleY;
-                final right = det.box.right * scaleX;
-                final bottom = det.box.bottom * scaleY;
+                final left = t.det.box.left * scaleX;
+                final top = t.det.box.top * scaleY;
+                final right = t.det.box.right * scaleX;
+                final bottom = t.det.box.bottom * scaleY;
 
-                return Opacity(
-                  opacity: opacity.clamp(0.0, 1.0),
-                  child: CustomPaint(
-                    painter: _BoxPainter(
-                      rect: Rect.fromLTRB(left, top, right, bottom),
-                      label:
-                          '$label ${(det.confidence * 100).toStringAsFixed(0)}%',
-                      color: color,
-                      canvasSize: Size(
-                        constraints.maxWidth,
-                        constraints.maxHeight,
-                      ),
+                return CustomPaint(
+                  painter: _BoxPainter(
+                    rect: Rect.fromLTRB(left, top, right, bottom),
+                    label:
+                        '${t.det.label} ${(t.det.confidence * 100).toStringAsFixed(0)}%',
+                    color: color,
+                    opacity: opacity.clamp(0.0, 1.0),
+                    canvasSize: Size(
+                      constraints.maxWidth,
+                      constraints.maxHeight,
                     ),
-                    child: const SizedBox.expand(),
                   ),
+                  child: const SizedBox.expand(),
                 );
               },
-            ),
-          );
-        }
-
-        return Stack(children: boxes);
+            );
+          }).toList(),
+        );
       },
     );
   }
 }
 
+// ─── IoU helper ────────────────────────────────────────────────────────────
+
+double _iou(Rect a, Rect b) {
+  final il = max(a.left, b.left);
+  final it = max(a.top, b.top);
+  final ir = min(a.right, b.right);
+  final ib = min(a.bottom, b.bottom);
+  if (ir <= il || ib <= it) return 0.0;
+  final inter = (ir - il) * (ib - it);
+  return inter / (a.width * a.height + b.width * b.height - inter);
+}
+
 // ─── Single-box painter ────────────────────────────────────────────────────
 
-/// Paints one bounding box and its label badge.
+/// Paints one bounding box and its label badge with the given [opacity].
 class _BoxPainter extends CustomPainter {
   final Rect rect;
   final String label;
   final Color color;
+  final double opacity;
   final Size canvasSize;
 
   const _BoxPainter({
     required this.rect,
     required this.label,
     required this.color,
+    required this.opacity,
     required this.canvasSize,
   });
 
@@ -195,7 +244,7 @@ class _BoxPainter extends CustomPainter {
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(6)),
       Paint()
-        ..color = color.withValues(alpha: 0.1)
+        ..color = color.withValues(alpha: 0.1 * opacity)
         ..style = PaintingStyle.fill,
     );
 
@@ -203,14 +252,14 @@ class _BoxPainter extends CustomPainter {
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(6)),
       Paint()
-        ..color = color.withValues(alpha: 0.8)
+        ..color = color.withValues(alpha: 0.8 * opacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.0,
     );
 
     // Label badge
     final textStyle = ui.TextStyle(
-      color: Colors.white,
+      color: Colors.white.withValues(alpha: opacity),
       fontSize: 12,
       fontWeight: FontWeight.bold,
     );
@@ -234,7 +283,7 @@ class _BoxPainter extends CustomPainter {
         const Radius.circular(4),
       ),
       Paint()
-        ..color = color.withValues(alpha: 0.85)
+        ..color = color.withValues(alpha: 0.85 * opacity)
         ..style = PaintingStyle.fill,
     );
 
@@ -243,5 +292,8 @@ class _BoxPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BoxPainter old) =>
-      old.rect != rect || old.label != label || old.color != color;
+      old.rect != rect ||
+      old.label != label ||
+      old.color != color ||
+      old.opacity != opacity;
 }
