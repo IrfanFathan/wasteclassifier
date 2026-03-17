@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -30,32 +29,32 @@ Color _colorForLabel(String label, Map<String, int> indexMap) {
 
 // ─── Tracked detection entry ────────────────────────────────────────────────
 
-/// A single detection being tracked with its animation controller.
+/// A single classification result being tracked with its animation controller.
 class _TrackedDetection {
   Detection det;
   final AnimationController ctrl;
-  bool leaving;
+  bool leaving = false;
 
-  _TrackedDetection({
-    required this.det,
-    required this.ctrl,
-    this.leaving = false,
-  });
+  _TrackedDetection({required this.det, required this.ctrl});
 }
 
 // ─── Public widget ─────────────────────────────────────────────────────────
 
-/// Overlay that renders animated bounding boxes and label badges for detected
-/// objects on top of the camera preview.
+/// Overlay that renders an animated classification label banner for the
+/// Teachable Machine classification result.
 ///
-/// Each detection fades **in** over 150 ms and **out** over 300 ms.
-/// Multiple instances of the same label are each tracked independently
-/// by IoU matching (threshold: [kSmootherMatchIou]).
+/// Since TM classifies the entire frame (no bounding boxes), this overlay
+/// shows a single top-center label badge instead of per-object boxes.
+///
+/// Each classification result fades **in** over 150 ms and **out** over 300 ms.
+/// Label changes are tracked by IoU matching (full-frame boxes always match
+/// with IoU = 1.0 when the label is the same, so transitions between
+/// different labels get the fade-out/fade-in treatment).
 class DetectionOverlay extends StatefulWidget {
-  /// Current detections to render (already in original frame coordinates).
+  /// Current detections to render (0 or 1 items for classification).
   final List<Detection> detections;
 
-  /// Actual camera frame dimensions (e.g. 1920×1080).
+  /// Actual camera frame dimensions (e.g. 1920x1080).
   final int frameWidth;
   final int frameHeight;
 
@@ -77,7 +76,7 @@ class _DetectionOverlayState extends State<DetectionOverlay>
   /// All currently tracked detections (including those fading out).
   final List<_TrackedDetection> _tracked = [];
 
-  /// Stable label → color index mapping so colors don't jump.
+  /// Stable label -> color index mapping so colors don't jump.
   final Map<String, int> _colorIndex = {};
 
   @override
@@ -92,7 +91,7 @@ class _DetectionOverlayState extends State<DetectionOverlay>
     final matched = List<bool>.filled(_tracked.length, false);
     final incomingMatched = List<bool>.filled(incoming.length, false);
 
-    // Match incoming to tracked by same label + IoU ≥ threshold.
+    // Match incoming to tracked by same label + IoU >= threshold.
     for (int i = 0; i < incoming.length; i++) {
       final det = incoming[i];
       double bestIou = kSmootherMatchIou; // minimum threshold
@@ -119,25 +118,26 @@ class _DetectionOverlayState extends State<DetectionOverlay>
       }
     }
 
-    // Unmatched tracked → start fade-out.
+    // Unmatched tracked -> start fade-out.
     for (int j = 0; j < _tracked.length; j++) {
       if (!matched[j] && !_tracked[j].leaving) {
         _tracked[j].leaving = true;
         final ctrl = _tracked[j].ctrl;
         if (!ctrl.isAnimating && ctrl.value > 0.0) {
           ctrl.reverse().then((_) {
-            if (mounted)
+            if (mounted) {
               setState(
                 () => _tracked.removeWhere(
                   (t) => t.leaving && t.ctrl.value == 0.0,
                 ),
               );
+            }
           });
         }
       }
     }
 
-    // Unmatched incoming → create new tracked entry and fade in.
+    // Unmatched incoming -> create new tracked entry and fade in.
     for (int i = 0; i < incoming.length; i++) {
       if (incomingMatched[i]) continue;
       final det = incoming[i];
@@ -168,9 +168,6 @@ class _DetectionOverlayState extends State<DetectionOverlay>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final scaleX = constraints.maxWidth / widget.frameWidth;
-        final scaleY = constraints.maxHeight / widget.frameHeight;
-
         return Stack(
           children: _tracked.map((t) {
             final color = _colorForLabel(t.det.label, _colorIndex);
@@ -180,16 +177,10 @@ class _DetectionOverlayState extends State<DetectionOverlay>
                 final opacity = t.ctrl.value;
                 if (opacity <= 0) return const SizedBox.shrink();
 
-                final left = t.det.box.left * scaleX;
-                final top = t.det.box.top * scaleY;
-                final right = t.det.box.right * scaleX;
-                final bottom = t.det.box.bottom * scaleY;
-
                 return CustomPaint(
-                  painter: _BoxPainter(
-                    rect: Rect.fromLTRB(left, top, right, bottom),
+                  painter: _ClassificationPainter(
                     label:
-                        '${t.det.label} ${(t.det.confidence * 100).toStringAsFixed(0)}%',
+                        '${t.det.label}  ${(t.det.confidence * 100).toStringAsFixed(0)}%',
                     color: color,
                     opacity: opacity.clamp(0.0, 1.0),
                     canvasSize: Size(
@@ -211,27 +202,29 @@ class _DetectionOverlayState extends State<DetectionOverlay>
 // ─── IoU helper ────────────────────────────────────────────────────────────
 
 double _iou(Rect a, Rect b) {
-  final il = max(a.left, b.left);
-  final it = max(a.top, b.top);
-  final ir = min(a.right, b.right);
-  final ib = min(a.bottom, b.bottom);
+  final il = a.left > b.left ? a.left : b.left;
+  final it = a.top > b.top ? a.top : b.top;
+  final ir = a.right < b.right ? a.right : b.right;
+  final ib = a.bottom < b.bottom ? a.bottom : b.bottom;
   if (ir <= il || ib <= it) return 0.0;
   final inter = (ir - il) * (ib - it);
   return inter / (a.width * a.height + b.width * b.height - inter);
 }
 
-// ─── Single-box painter ────────────────────────────────────────────────────
+// ─── Classification label painter ──────────────────────────────────────────
 
-/// Paints one bounding box and its label badge with the given [opacity].
-class _BoxPainter extends CustomPainter {
-  final Rect rect;
+/// Paints a classification label banner at the top-center of the overlay.
+///
+/// Instead of bounding boxes (which are meaningless for whole-frame
+/// classification), this draws a prominent label badge with a subtle
+/// full-frame border tint.
+class _ClassificationPainter extends CustomPainter {
   final String label;
   final Color color;
   final double opacity;
   final Size canvasSize;
 
-  const _BoxPainter({
-    required this.rect,
+  const _ClassificationPainter({
     required this.label,
     required this.color,
     required this.opacity,
@@ -240,60 +233,58 @@ class _BoxPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Box fill
+    // ── 1. Subtle full-frame border tint ──────────────────────────────────
+    final frameRect = Rect.fromLTWH(0, 0, canvasSize.width, canvasSize.height);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+      RRect.fromRectAndRadius(frameRect, const Radius.circular(4)),
       Paint()
-        ..color = color.withValues(alpha: 0.1 * opacity)
+        ..color = color.withValues(alpha: 0.06 * opacity)
         ..style = PaintingStyle.fill,
     );
-
-    // Box border
     canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+      RRect.fromRectAndRadius(frameRect.deflate(1.5), const Radius.circular(4)),
       Paint()
-        ..color = color.withValues(alpha: 0.8 * opacity)
+        ..color = color.withValues(alpha: 0.35 * opacity)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
+        ..strokeWidth = 3.0,
     );
 
-    // Label badge
+    // ── 2. Label badge at top-center ──────────────────────────────────────
     final textStyle = ui.TextStyle(
       color: Colors.white.withValues(alpha: opacity),
-      fontSize: 12,
+      fontSize: 16,
       fontWeight: FontWeight.bold,
     );
     final pb =
         ui.ParagraphBuilder(
-            ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
+            ui.ParagraphStyle(textAlign: TextAlign.center, maxLines: 1),
           )
           ..pushStyle(textStyle)
           ..addText(label);
     final paragraph = pb.build()
       ..layout(ui.ParagraphConstraints(width: canvasSize.width));
 
-    final textWidth = min(paragraph.maxIntrinsicWidth + 12, canvasSize.width);
-    final textHeight = paragraph.height + 6;
-    final badgeLeft = rect.left;
-    final badgeTop = max(0.0, rect.top - textHeight - 2);
+    final textWidth = paragraph.maxIntrinsicWidth + 28;
+    final textHeight = paragraph.height + 14;
+    final badgeLeft = (canvasSize.width - textWidth) / 2;
+    const badgeTop = 16.0;
 
+    // Badge background
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(badgeLeft, badgeTop, textWidth, textHeight),
-        const Radius.circular(4),
+        const Radius.circular(10),
       ),
       Paint()
         ..color = color.withValues(alpha: 0.85 * opacity)
         ..style = PaintingStyle.fill,
     );
 
-    canvas.drawParagraph(paragraph, Offset(badgeLeft + 6, badgeTop + 3));
+    // Badge text
+    canvas.drawParagraph(paragraph, Offset(badgeLeft + 14, badgeTop + 7));
   }
 
   @override
-  bool shouldRepaint(covariant _BoxPainter old) =>
-      old.rect != rect ||
-      old.label != label ||
-      old.color != color ||
-      old.opacity != opacity;
+  bool shouldRepaint(covariant _ClassificationPainter old) =>
+      old.label != label || old.color != color || old.opacity != opacity;
 }

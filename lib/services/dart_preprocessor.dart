@@ -1,14 +1,13 @@
 // dart_preprocessor.dart
 //
-// Pure-Dart fallback for the OpenCV preprocessing pipeline.
+// Pure-Dart fallback for the preprocessing pipeline.
 //
 // Used when the native libyolo_preprocess.so is unavailable (e.g. OpenCV SDK
 // not configured, first build, or unsupported device ABI).
 //
-// Differences vs. the native path:
-//   - No blur / Laplacian variance check (every frame is processed).
-//   - No CLAHE lighting normalisation.
-//   - Letterbox resize uses the `image` package (slower than OpenCV but correct).
+// Teachable Machine models expect:
+//   - Input: [1, 224, 224, 3] NHWC, float32, normalised to [0, 1].
+//   - Simple resize (no letterbox padding).
 //
 // The heavy work (YUV conversion + resize) runs inside a [compute] isolate so
 // the platform UI thread is never blocked.
@@ -76,31 +75,23 @@ _PreprocessResult _runPreprocess(_PreprocessMsg msg) {
     }
   }
 
-  // Step 2: Letterbox resize to targetSize × targetSize
+  // Step 2: Simple resize to targetSize × targetSize (no letterbox).
+  // Teachable Machine models are trained on resized (not letterboxed) images.
   final ts = msg.targetSize;
-  final scale = (ts / msg.frameWidth) < (ts / msg.frameHeight)
-      ? ts / msg.frameWidth
-      : ts / msg.frameHeight;
+  final resized = img.copyResize(rgb, width: ts, height: ts);
 
-  final newW = (msg.frameWidth * scale).round();
-  final newH = (msg.frameHeight * scale).round();
+  // Compute effective scale for coordinate unmapping (use the larger
+  // dimension so that unmapping from the classification result works).
+  final scaleX = ts / msg.frameWidth;
+  final scaleY = ts / msg.frameHeight;
+  final scale = (scaleX < scaleY) ? scaleX : scaleY;
 
-  final resized = img.copyResize(rgb, width: newW, height: newH);
-
-  final padLeft = (ts - newW) ~/ 2;
-  final padTop = (ts - newH) ~/ 2;
-
-  // Fill canvas with gray (114) and paste the resized image.
-  final canvas = img.Image(width: ts, height: ts);
-  img.fill(canvas, color: img.ColorRgb8(114, 114, 114));
-  img.compositeImage(canvas, resized, dstX: padLeft, dstY: padTop);
-
-  // Step 3: Normalise to Float32 [0, 1]
+  // Step 3: Normalise to Float32 [0, 1] in NHWC order.
   final floatData = Float32List(ts * ts * 3);
   int idx = 0;
   for (int r = 0; r < ts; r++) {
     for (int c = 0; c < ts; c++) {
-      final pixel = canvas.getPixel(c, r);
+      final pixel = resized.getPixel(c, r);
       floatData[idx++] = pixel.r / 255.0;
       floatData[idx++] = pixel.g / 255.0;
       floatData[idx++] = pixel.b / 255.0;
@@ -109,8 +100,8 @@ _PreprocessResult _runPreprocess(_PreprocessMsg msg) {
 
   return _PreprocessResult(
     floatData: floatData,
-    padLeft: padLeft,
-    padTop: padTop,
+    padLeft: 0, // no letterbox padding for TM
+    padTop: 0,
     scale: scale,
   );
 }
@@ -119,14 +110,14 @@ _PreprocessResult _runPreprocess(_PreprocessMsg msg) {
 
 /// Pure-Dart preprocessing fallback.
 ///
-/// Converts [image] (YUV420) → letterboxed 640×640 Float32 tensor.
+/// Converts [image] (YUV420) → resized 224×224 Float32 tensor normalised
+/// to [0, 1] in NHWC layout. Suitable for Teachable Machine TFLite models.
+///
 /// Runs in a worker isolate via [compute] — never blocks the UI thread.
 ///
 /// Returns a [PreprocessResult] on success, or `null` if the isolate fails.
 class DartPreprocessor {
   /// Preprocesses [image] using the pure-Dart pipeline.
-  ///
-  /// Equivalent to the native `preprocessFrame` call minus blur-check and CLAHE.
   static Future<PreprocessResult?> preprocessFrame(CameraImage image) async {
     try {
       final yPlane = image.planes[0];

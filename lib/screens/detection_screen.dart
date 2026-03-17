@@ -32,11 +32,15 @@ enum DetectionState { waiting, detected, unmapped }
 
 /// Main camera screen for waste classification.
 ///
+/// Uses a Teachable Machine image classification model to classify the entire
+/// camera frame as a single waste category. The result is displayed as a
+/// label + confidence overlay.
+///
 /// Features:
 ///   - Full-screen camera preview (correct 4:3 aspect ratio).
 ///   - 8×8 center-origin grid overlay with Cartesian labels.
-///   - Active cell highlight showing where waste is located in frame.
-///   - Bottom-anchored result panel showing (gridX, gridY) coordinates.
+///   - Classification label banner via [DetectionOverlay].
+///   - Bottom-anchored result panel showing detected class + grid coordinate.
 ///   - Robot navigation command from [WasteLocator].
 ///   - Grid-based pick commands sent to ESP32 robotic arm controller.
 class DetectionScreen extends StatefulWidget {
@@ -222,7 +226,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       if (detections.isEmpty) {
         // No detections — go to waiting state.
-        if (mounted && _state != DetectionState.waiting) {
+        if (mounted) {
           setState(() {
             _state = DetectionState.waiting;
             _activePosition = null;
@@ -262,9 +266,12 @@ class _DetectionScreenState extends State<DetectionScreen>
     }
   }
 
-  /// Updates detection state from pixel coordinates.
+  /// Updates detection state from the classification result.
   ///
-  /// [cx], [cy]  — pixel centre of the detected object.
+  /// For Teachable Machine classification, [cx] and [cy] are the frame center
+  /// (since the model classifies the whole frame). Grid mapping still works:
+  /// the object maps to grid cell (0, 0) — directly under the camera.
+  ///
   /// [fw], [fh]  — frame dimensions.
   void _processResult(
     String label,
@@ -513,7 +520,7 @@ class _DetectionScreenState extends State<DetectionScreen>
                 fit: StackFit.expand,
                 children: [
                   CameraPreview(_cameraController!),
-                  if (_currentDetections.isNotEmpty && _frameWidth > 0)
+                  if (_frameWidth > 0)
                     DetectionOverlay(
                       detections: _currentDetections,
                       frameWidth: _frameWidth,
@@ -765,10 +772,14 @@ class _DetectionScreenState extends State<DetectionScreen>
         ),
         Row(
           children: [
-            const Icon(Icons.grid_4x4, color: Colors.white30, size: 18),
+            const Icon(
+              Icons.center_focus_strong,
+              color: Colors.white30,
+              size: 18,
+            ),
             const SizedBox(width: 8),
             Text(
-              'Scanning 8×8 grid…',
+              'Classifying…',
               style: GoogleFonts.inter(color: Colors.white38, fontSize: 13),
             ),
             const Spacer(),
@@ -797,7 +808,7 @@ class _DetectionScreenState extends State<DetectionScreen>
         ),
         const SizedBox(height: 10),
         Text(
-          'Point the camera at any waste object.\nDetection works across the entire frame.',
+          'Point the camera at any waste object.\nThe model classifies the entire frame.',
           style: GoogleFonts.inter(
             color: Colors.white24,
             fontSize: 12,

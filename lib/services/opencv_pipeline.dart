@@ -9,12 +9,12 @@ import '../utils/detection_constants.dart';
 /// Dart-side bridge to the native OpenCV preprocessing pipeline.
 ///
 /// Sends raw YUV camera frames over the `opencv_pipeline` MethodChannel
-/// and receives back a preprocessed 640×640×3 float32 tensor plus
-/// letterbox metadata for coordinate unmapping.
+/// and receives back a preprocessed 224×224×3 float32 tensor suitable
+/// for Teachable Machine classification models.
 ///
 /// When the native OpenCV library is unavailable (e.g. OpenCV SDK not
 /// configured), the call transparently falls back to [DartPreprocessor],
-/// which performs the same letterbox pipeline in a Dart isolate — without
+/// which performs the same resize pipeline in a Dart isolate — without
 /// blur-check or CLAHE, but fully functional for inference.
 class OpenCVPipeline {
   static const _channel = MethodChannel('opencv_pipeline');
